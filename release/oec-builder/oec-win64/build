@@ -1,0 +1,18 @@
+#!/bin/bash
+
+mkdir -p $GOPATH/src/github.com/atlassian/jec && \
+cp -R $JEC_REPO/. $GOPATH/src/github.com/atlassian/jec && \
+
+cd $GOPATH/src/github.com/atlassian/jec/windows_service/main && \
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -o $OUTPUT/jec-packages-win64/jecService64.exe jecService.go && \
+
+cd ~ && \
+cd $GOPATH/src/github.com/atlassian/jec && \
+export GIT_COMMIT=$(git rev-list -1 HEAD) && \
+
+cd main && \
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -ldflags "-X main.JECCommitVersion=$GIT_COMMIT
+ -X main.JECVersion=$JEC_VERSION" -o $OUTPUT/jec-packages-win64/JiraEdgeConnector64.exe main.go && \
+
+cd $OUTPUT/jec-packages-win64 && \
+zip -r jec-win-amd64.zip ./

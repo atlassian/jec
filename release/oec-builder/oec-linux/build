@@ -1,0 +1,15 @@
+#!/bin/bash
+
+mkdir -p $GOPATH/src/github.com/atlassian/jec && \
+cp -R $JEC_REPO/. $GOPATH/src/github.com/atlassian/jec && \
+
+cd ~ && \
+cd $GOPATH/src/github.com/atlassian/jec && \
+export GIT_COMMIT=$(git rev-list -1 HEAD) && \
+
+cd main && \
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=vendor -a -ldflags "-X main.JECCommitVersion=$GIT_COMMIT
+-X main.JECVersion=$JEC_VERSION" -o $OUTPUT/jec-packages-linux/JiraEdgeConnector main.go && \
+
+cd $OUTPUT/jec-packages-linux && \
+zip -r jec-linux-amd64.zip ./
