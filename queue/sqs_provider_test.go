@@ -109,8 +109,9 @@ func TestReceiveMessage(t *testing.T) {
 	assert.Equal(t, mockQueueUrl1, *capturedInput.QueueUrl)
 	assert.Equal(t, int64(0), *capturedInput.WaitTimeSeconds) // because of short polling
 	assert.Equal(t, int64(10), *capturedInput.MaxNumberOfMessages)
-	assert.Equal(t, 1, len(capturedInput.MessageAttributeNames))
+	assert.Equal(t, 2, len(capturedInput.MessageAttributeNames))
 	assert.Equal(t, "ownerId", *capturedInput.MessageAttributeNames[0])
+	assert.Equal(t, "channelId", *capturedInput.MessageAttributeNames[1])
 }
 
 func TestReceiveMessageWithError(t *testing.T) {
@@ -233,7 +234,7 @@ var mockSuccessReceiveFunc = func(numOfMessage int64, visibilityTimeout int64) (
 	messages := make([]*sqs.Message, 0)
 	for i := int64(0); i < numOfMessage; i++ {
 		id := strconv.FormatInt(i, 10)
-		messageAttr := map[string]*sqs.MessageAttributeValue{"ownerId": {StringValue: &mockOwnerId}}
+		messageAttr := map[string]*sqs.MessageAttributeValue{"ownerId": {StringValue: &mockOwnerId}, "channelId": {StringValue: &mockChannelId}}
 		messages = append(messages, &sqs.Message{MessageId: &id, MessageAttributes: messageAttr, Body: &body})
 	}
 

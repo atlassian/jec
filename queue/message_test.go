@@ -19,6 +19,7 @@ var (
 	mockApiKey    = "mockApiKey"
 	mockBaseUrl   = "mockBaseUrl"
 	mockOwnerId   = "mockOwnerId"
+	mockChannelId = "mockChannelId"
 )
 
 var mockActionSpecs = conf.ActionSpecifications{

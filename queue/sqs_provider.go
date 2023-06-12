@@ -11,6 +11,7 @@ import (
 )
 
 const ownerId = "ownerId"
+const channelId = "channelId"
 
 type SQSClient interface {
 	ChangeMessageVisibility(input *sqs.ChangeMessageVisibilityInput) (*sqs.ChangeMessageVisibilityOutput, error)
@@ -111,6 +112,7 @@ func (qp *sqsProvider) ReceiveMessage(maxNumOfMessage int64, visibilityTimeout i
 	request := &sqs.ReceiveMessageInput{
 		MessageAttributeNames: []*string{
 			aws.String(ownerId),
+			aws.String(channelId),
 		},
 		QueueUrl:            &queueUrl,
 		MaxNumberOfMessages: aws.Int64(maxNumOfMessage),
