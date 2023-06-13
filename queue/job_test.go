@@ -163,7 +163,7 @@ func TestExecuteWithInvalidQueueMessage(t *testing.T) {
 	sqsJob := newJobTest()
 
 	falseIntegrationId := "falseIntegrationId"
-	messageAttr := map[string]*sqs.MessageAttributeValue{ownerId: {StringValue: &falseIntegrationId}}
+	messageAttr := map[string]*sqs.MessageAttributeValue{ownerId: {StringValue: &falseIntegrationId}, channelId: {StringValue: &falseIntegrationId}}
 	sqsJob.message = sqs.Message{MessageAttributes: messageAttr, MessageId: &mockMessageId}
 
 	err := sqsJob.Execute()

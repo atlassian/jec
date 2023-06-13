@@ -74,7 +74,8 @@ func (j *job) Execute() error {
 	messageAttr := j.sqsMessage().MessageAttributes
 
 	if messageAttr == nil ||
-		*messageAttr[ownerId].StringValue != j.ownerId {
+		*messageAttr[ownerId].StringValue != j.ownerId &&
+			*messageAttr[channelId].StringValue != j.ownerId {
 		j.state = jobError
 		return errors.Errorf("Message[%s] is invalid, will not be processed.", messageId)
 	}
