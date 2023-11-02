@@ -1,0 +1,64 @@
+{
+  "apiKey": "53d8892c-b931-4940-ad4c-5c1286c398d7",
+  "baseUrl": "https://api.stg.atlassian.com",
+  "logLevel": "DEBUG",
+  "globalArgs": [],
+  "globalFlags": {
+    "url": "<url>",
+    "username": "esemiz",
+    "password": "123",
+    "issueTypeName": "12",
+    "key": "key11"
+  },
+  "actionMappings": {
+    "createIssue": {
+      "filepath": "./conf/a/a.go",
+      "sourceType": "local",
+      "env": [],
+      "stdout": "./scripts/out.txt"
+    },
+    "Create": {
+      "filepath": "./conf/a/a.go",
+      "sourceType": "local",
+      "env": [],
+      "stdout": "./scripts/out.txt"
+    },
+    "create": {
+      "filepath": "./conf/a/a.py",
+      "sourceType": "local",
+      "env": [],
+      "stdout": "./scripts/out.txt"
+    },
+
+    "postActionToJEC": {
+      "filepath": "./conf/a/a.go",
+      "sourceType": "local",
+      "env": [],
+      "stdout": "./scripts/out.txt"
+    },
+    "resolveIssue": {
+      "filepath": "<path_of_script>",
+      "sourceType": "local",
+      "env": [],
+      "stdout": "./scripts/out.txt"
+    },
+    "addComment": {
+      "filepath": "./conf/a/a.go",
+      "sourceType": "local",
+      "env": [],
+      "stdout": "./scripts/out.txt"
+    }
+  },
+  "pollerConf": {
+    "pollingWaitIntervalInMillis": 100,
+    "visibilityTimeoutInSec": 30,
+    "maxNumberOfMessages": 10
+  },
+  "poolConf": {
+    "maxNumberOfWorker": 12,
+    "minNumberOfWorker": 4,
+    "monitoringPeriodInMillis": 15000,
+    "keepAliveTimeInMillis": 6000,
+    "queueSize": 0
+  }
+}

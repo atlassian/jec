@@ -23,6 +23,15 @@ var defaultConfFilepath = filepath.Join("~", "jec", "config.json")
 
 func Read() (*Configuration, error) {
 
+	err := os.Setenv("JEC_CONF_SOURCE_TYPE", "local")
+	if err != nil {
+		return nil, err
+	}
+	err2 := os.Setenv("JEC_CONF_LOCAL_FILEPATH", "conf/config.json")
+	if err2 != nil {
+		return nil, err2
+	}
+
 	confSourceType := os.Getenv("JEC_CONF_SOURCE_TYPE")
 	conf, err := readFileFromSource(strings.ToLower(confSourceType))
 	if err != nil {
@@ -32,6 +41,7 @@ func Read() (*Configuration, error) {
 	if os.Getenv("JEC_API_KEY") != "" {
 		conf.ApiKey = os.Getenv("JEC_API_KEY")
 	}
+	print("apiKey: ", conf.ApiKey)
 
 	err = validate(conf)
 	if err != nil {

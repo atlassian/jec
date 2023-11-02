@@ -14,6 +14,7 @@ require (
 	github.com/go-git/go-git/v5 v5.2.0
 	github.com/google/uuid v1.1.1
 	github.com/kardianos/service v1.0.0
+	golang.org/x/sys v0.6.0 // indirect
 	github.com/pkg/errors v0.8.1
 	github.com/prometheus/client_golang v1.1.0
 	github.com/prometheus/client_model v0.0.0-20190812154241-14fe0d1b01d4 // indirect
