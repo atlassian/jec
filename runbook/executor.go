@@ -2,6 +2,7 @@ package runbook
 
 import (
 	"bytes"
+	"github.com/sirupsen/logrus"
 	"io"
 	"os"
 	"os/exec"
@@ -26,13 +27,20 @@ type ExecError struct {
 	error
 }
 
-func Execute(executablePath string, args, environmentVars []string, stdout, stderr io.Writer) error {
+func Execute(executionId string, executablePath string, args, environmentVars []string, stdout, stderr io.Writer) (string, error) {
+
+	callbackContextHandler := NewCallbackContextHandler(executionId)
+	callbackContextHandler.CreatePipe()
+
+	go callbackContextHandler.Read()
 
 	if args == nil {
 		args = []string{}
 	} else if environmentVars == nil {
 		environmentVars = []string{}
 	}
+
+	args = append(args, []string{"--jecNamedPipe", callbackContextHandler.pipePath}...)
 
 	var cmd *exec.Cmd
 	fileExt := filepath.Ext(strings.ToLower(executablePath))
@@ -57,9 +65,14 @@ func Execute(executablePath string, args, environmentVars []string, stdout, stde
 	}
 
 	err := cmd.Run()
+
+	callbackContextHandler.ClosePipe()
+
 	if err != nil {
-		return &ExecError{stderrBuff.String(), err}
+		return "", &ExecError{stderrBuff.String(), err}
 	}
 
-	return nil
+	callbackContext := bytes.NewBuffer(bytes.Trim(callbackContextHandler.callbackContextBuffer, "\x00")).String()
+	logrus.Debug("Callback context: " + callbackContext)
+	return callbackContext, nil
 }

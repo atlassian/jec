@@ -71,8 +71,10 @@ func (mh *messageHandler) Handle(message sqs.Message) (*runbook.ActionResultPayl
 	}
 
 	start := time.Now()
-	executionResult, err := mh.execute(&mappedAction, *message.Body)
+	executionResult, callbackContext, err := mh.execute(&mappedAction, &message)
 	took := time.Since(start)
+
+	result.CallbackContext = callbackContext
 
 	switch err := err.(type) {
 	case *runbook.ExecError:
@@ -102,18 +104,18 @@ func (mh *messageHandler) Handle(message sqs.Message) (*runbook.ActionResultPayl
 	return result, nil
 }
 
-func (mh *messageHandler) execute(mappedAction *conf.MappedAction, messageBody string) (string, error) {
+func (mh *messageHandler) execute(mappedAction *conf.MappedAction, message *sqs.Message) (string, string, error) {
 
 	sourceType := mappedAction.SourceType
 	switch sourceType {
 	case conf.GitSourceType:
 		if mh.repositories == nil {
-			return "", errors.New("Repositories should be provided.")
+			return "", "", errors.New("Repositories should be provided.")
 		}
 
 		repository, err := mh.repositories.Get(mappedAction.GitOptions.Url)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 
 		repository.RLock()
@@ -122,7 +124,7 @@ func (mh *messageHandler) execute(mappedAction *conf.MappedAction, messageBody s
 
 	case conf.LocalSourceType:
 		args := append(mh.actionSpecs.GlobalFlags.Args(), mappedAction.Flags.Args()...)
-		args = append(args, []string{"-payload", messageBody}...)
+		args = append(args, []string{"-payload", *message.Body}...)
 		args = append(args, mh.actionSpecs.GlobalArgs...)
 		args = append(args, mappedAction.Args...)
 		env := append(mh.actionSpecs.GlobalEnv, mappedAction.Env...)
@@ -138,9 +140,9 @@ func (mh *messageHandler) execute(mappedAction *conf.MappedAction, messageBody s
 		}
 		stderr := mh.actionLoggers[mappedAction.Stderr]
 
-		err := runbook.ExecuteFunc(mappedAction.Filepath, args, env, stdout, stderr)
-		return stdoutBuff.String(), err
+		callbackContext, err := runbook.ExecuteFunc(*message.MessageId, mappedAction.Filepath, args, env, stdout, stderr)
+		return stdoutBuff.String(), callbackContext, err
 	default:
-		return "", errors.Errorf("Unknown action sourceType[%s].", sourceType)
+		return "", "", errors.Errorf("Unknown action sourceType[%s].", sourceType)
 	}
 }
