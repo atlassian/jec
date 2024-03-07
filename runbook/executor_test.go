@@ -25,7 +25,7 @@ func TestExecuteSuccess(t *testing.T) {
 		}
 
 		cmdOutput, cmdErr := &bytes.Buffer{}, &bytes.Buffer{}
-		err = Execute(tmpFilePath, nil, testEnvironmentVariables, cmdOutput, cmdErr)
+		_, err = Execute("executionId", tmpFilePath, nil, testEnvironmentVariables, cmdOutput, cmdErr)
 
 		assert.NoError(t, err, "Error from Execute operation was not empty.")
 		assert.Equal(t, "", cmdErr.String(), "Error stream from executed file was not empty.")
@@ -41,7 +41,7 @@ func TestExecuteSuccess(t *testing.T) {
 		}
 
 		cmdOutput, cmdErr := &bytes.Buffer{}, &bytes.Buffer{}
-		err = Execute(tmpFilePath, nil, testEnvironmentVariables, cmdOutput, cmdErr)
+		_, err = Execute("executionId", tmpFilePath, nil, testEnvironmentVariables, cmdOutput, cmdErr)
 
 		assert.NoError(t, err, "Error from Execute operation was not empty.")
 		assert.Equal(t, "", cmdErr.String(), "Error stream from executed file was not empty.")
@@ -61,7 +61,7 @@ func TestExecuteWithErrorStream(t *testing.T) {
 		}
 
 		cmdOutput, cmdErr := &bytes.Buffer{}, &bytes.Buffer{}
-		err = Execute(tmpFilePath, nil, nil, cmdOutput, cmdErr)
+		_, err = Execute("executionId", tmpFilePath, nil, nil, cmdOutput, cmdErr)
 
 		assert.NoError(t, err, "Error from Execute operation was not empty.")
 		assert.Equal(t, "", cmdOutput.String(), "Output stream from executed file was not empty.")
@@ -77,7 +77,7 @@ func TestExecuteWithErrorStream(t *testing.T) {
 		}
 
 		cmdOutput, cmdErr := &bytes.Buffer{}, &bytes.Buffer{}
-		err = Execute(tmpFilePath, nil, nil, cmdOutput, cmdErr)
+		_, err = Execute("executionId", tmpFilePath, nil, nil, cmdOutput, cmdErr)
 
 		assert.NoError(t, err, "Error from Execute operation was not empty.")
 		assert.Equal(t, "", cmdOutput.String(), "Output stream from executed file was not empty.")
@@ -96,7 +96,7 @@ func TestExecuteWithError(t *testing.T) {
 		}
 
 		cmdOutput, cmdErr := &bytes.Buffer{}, &bytes.Buffer{}
-		err = Execute(tmpFilePath, nil, nil, cmdOutput, cmdErr)
+		_, err = Execute("executionId", tmpFilePath, nil, nil, cmdOutput, cmdErr)
 
 		assert.IsType(t, &ExecError{}, err)
 		assert.Error(t, err, "Error from Execute operation was empty.")
@@ -114,7 +114,7 @@ func TestExecuteWithError(t *testing.T) {
 		}
 
 		cmdOutput, cmdErr := &bytes.Buffer{}, &bytes.Buffer{}
-		err = Execute(tmpFilePath, nil, nil, cmdOutput, cmdErr)
+		_, err = Execute("executionId", tmpFilePath, nil, nil, cmdOutput, cmdErr)
 
 		assert.IsType(t, &ExecError{}, err)
 		assert.Error(t, err, "Error from Execute operation was empty.")
@@ -133,7 +133,7 @@ func TestExecuteWithError(t *testing.T) {
 		}
 
 		cmdOutput, cmdErr := &bytes.Buffer{}, &bytes.Buffer{}
-		err = Execute(tmpFilePath, nil, nil, cmdOutput, cmdErr)
+		_, err = Execute("executionId", tmpFilePath, nil, nil, cmdOutput, cmdErr)
 
 		assert.IsType(t, &ExecError{}, err)
 		assert.Error(t, err, "Error from Execute operation was empty.")

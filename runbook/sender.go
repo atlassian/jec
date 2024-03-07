@@ -17,13 +17,14 @@ var SendResultToJsmFunc = SendResultToJsm
 var client = &retryer.Retryer{}
 
 type ActionResultPayload struct {
-	RequestId      string `json:"requestId,omitempty"`
-	IsSuccessful   bool   `json:"isSuccessful,omitempty"`
-	EntityId       string `json:"entityId,omitempty"`
-	EntityType     string `json:"entityType,omitempty"`
-	Action         string `json:"action,omitempty"`
-	ActionType     string `json:"actionType,omitempty"`
-	FailureMessage string `json:"failureMessage,omitempty"`
+	RequestId       string `json:"requestId,omitempty"`
+	IsSuccessful    bool   `json:"isSuccessful,omitempty"`
+	EntityId        string `json:"entityId,omitempty"`
+	EntityType      string `json:"entityType,omitempty"`
+	Action          string `json:"action,omitempty"`
+	ActionType      string `json:"actionType,omitempty"`
+	FailureMessage  string `json:"failureMessage,omitempty"`
+	CallbackContext string `json:"callbackContext,omitempty"`
 	*HttpResponse
 }
 
