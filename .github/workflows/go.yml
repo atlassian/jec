@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version'     
+        description: 'Version'
         required: true
 jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/master'
+    if: ${{ (github.ref == 'refs/heads/master') || endsWith(github.event.inputs.version, 'SNAPSHOT') }}
     steps:
 
     - name: Set up Go 1.x
@@ -36,10 +36,10 @@ jobs:
     - name: Build Linux 64
       run: go build -mod=vendor -a -ldflags "-X main.JECCommitVersion=$GITHUB_SHA -X main.JECVersion=${{ github.event.inputs.version }}" -o ../.release/jec-packages-linux/JiraEdgeConnector main.go
       working-directory: main
-      if: success() 
+      if: success()
       env:
-        CGO_ENABLED: 0 
-        GOOS: linux 
+        CGO_ENABLED: 0
+        GOOS: linux
         GOARCH: amd64
         GO111MODULE: on
 
@@ -51,23 +51,23 @@ jobs:
     - name: Build Win 32 Service
       run: go build -mod=vendor -o ../../.release/jec-packages-win32/jecService32.exe jecService.go
       working-directory: windows_service/main
-      if: success() 
+      if: success()
       env:
-        CGO_ENABLED: 0 
-        GOOS: windows 
+        CGO_ENABLED: 0
+        GOOS: windows
         GOARCH: 386
         GO111MODULE: on
-  
+
     - name: Build Win 32
       run: go build -mod=vendor -a -ldflags "-X main.JECCommitVersion=$GITHUB_SHA -X main.JECVersion=${{ github.event.inputs.version }}" -o ../.release/jec-packages-win32/JiraEdgeConnector32.exe main.go
       working-directory: main
-      if: success() 
+      if: success()
       env:
-        CGO_ENABLED: 0 
-        GOOS: windows 
+        CGO_ENABLED: 0
+        GOOS: windows
         GOARCH: 386
         GO111MODULE: on
-    
+
     - uses: montudor/action-zip@v0.1.0
       name: Compressing Windows 32 Package
       with:
@@ -76,23 +76,23 @@ jobs:
     - name: Build Win 64 Service
       run: go build -mod=vendor -o ../../.release/jec-packages-win64/jecService64.exe jecService.go
       working-directory: windows_service/main
-      if: success() 
+      if: success()
       env:
-        CGO_ENABLED: 0 
-        GOOS: windows 
+        CGO_ENABLED: 0
+        GOOS: windows
         GOARCH: amd64
         GO111MODULE: on
-  
+
     - name: Build Win 64
       run: go build -mod=vendor -a -ldflags "-X main.JECCommitVersion=$GITHUB_SHA -X main.JECVersion=${{ github.event.inputs.version }}" -o ../.release/jec-packages-win64/JiraEdgeConnector64.exe main.go
       working-directory: main
-      if: success() 
+      if: success()
       env:
-        CGO_ENABLED: 0 
-        GOOS: windows 
+        CGO_ENABLED: 0
+        GOOS: windows
         GOARCH: amd64
         GO111MODULE: on
-    
+
     - uses: montudor/action-zip@v0.1.0
       name: Compressing Windows 64 Package
       with:
@@ -108,7 +108,7 @@ jobs:
         release_name: Release ${{ github.event.inputs.version }}
         draft: true
 
-    - name: Upload Linux 64 bit Release 
+    - name: Upload Linux 64 bit Release
       uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -118,7 +118,7 @@ jobs:
         asset_name: jec-linux-amd64-${{ github.event.inputs.version }}.zip
         asset_content_type: application/zip
 
-    - name: Upload Win 32 bit Release 
+    - name: Upload Win 32 bit Release
       uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -128,7 +128,7 @@ jobs:
         asset_name: jec-win-386-${{ github.event.inputs.version }}.zip
         asset_content_type: application/zip
 
-    - name: Upload Win 64 bit Release  
+    - name: Upload Win 64 bit Release
       uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -137,8 +137,8 @@ jobs:
         asset_path: .release/jec-win-amd64-${{ github.event.inputs.version }}.zip
         asset_name: jec-win-amd64-${{ github.event.inputs.version }}.zip
         asset_content_type: application/zip
-        
-    - name: Upload Artifacts 
+
+    - name: Upload Artifacts
       uses: actions/upload-artifact@v2
       with:
         name: Release Artifacts
