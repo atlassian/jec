@@ -63,8 +63,8 @@ var mockActionLoggers = map[string]io.Writer{
 	"/path/to/stderr": mockStderr,
 }
 
-func mockExecute(executablePath string, args, environmentVars []string, stdout, stderr io.Writer) error {
-	return nil
+func mockExecute(executionId string, executablePath string, args, environmentVars []string, stdout, stderr io.Writer) (string, error) {
+	return "", nil
 }
 
 func TestProcess(t *testing.T) {
@@ -85,10 +85,10 @@ func testProcessSuccessfully(t *testing.T) {
 	message := sqs.Message{Body: &body, MessageId: &id}
 	queueMessage := NewMessageHandler(nil, mockActionSpecs, mockActionLoggers)
 
-	runbook.ExecuteFunc = func(executablePath string, args, environmentVars []string, stdout, stderr io.Writer) error {
+	runbook.ExecuteFunc = func(executionId string, executablePath string, args, environmentVars []string, stdout, stderr io.Writer) (string, error) {
 		assert.Equal(t, mockStdout, stdout)
 		assert.Equal(t, mockStderr, stderr)
-		return nil
+		return "", nil
 	}
 
 	result, err := queueMessage.Handle(message)
@@ -99,9 +99,9 @@ func testProcessSuccessfully(t *testing.T) {
 }
 
 func testProcessHttpActionSuccessfully(t *testing.T) {
-	runbook.ExecuteFunc = func(executablePath string, args, environmentVars []string, stdout, stderr io.Writer) error {
+	runbook.ExecuteFunc = func(executionId string, executablePath string, args, environmentVars []string, stdout, stderr io.Writer) (string, error) {
 		io.Copy(stdout, bytes.NewBufferString(`{"headers": {"Date": "Wed, 14 Oct 2020 08:59:30 GMT"},"body": "done", "statusCode": 200}`))
-		return nil
+		return "", nil
 	}
 
 	body := `{"actionType":"http", "action":"Retrieve", "requestId": "RequestId"}`

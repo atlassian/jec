@@ -14,6 +14,8 @@ RUN addgroup -S jec && \
 COPY --from=builder /jec /opt/jec
 RUN mkdir -p /var/log/jec && \
     chown -R jec:jec /var/log/jec && \
-    chown -R jec:jec /opt/jec
+    chown -R jec:jec /opt/jec && \
+    mkdir -p /var/tmp/jec && \
+    chown -R jec:jec /var/tmp/jec
 USER jec
 ENTRYPOINT ["/opt/jec"]
