@@ -81,22 +81,25 @@ func (j *job) Execute() error {
 	}
 
 	result, err := j.messageHandler.Handle(j.message)
+
+	if result != nil {
+		go func() {
+			start := time.Now()
+
+			err = runbook.SendResultToJsmFunc(result, j.apiKey, j.baseUrl)
+			if err != nil {
+				logrus.Warnf("Could not send action result[%+v] of message[%s] to Jira Service Management: %s", result, messageId, err)
+			} else {
+				took := time.Since(start)
+				logrus.Debugf("Successfully sent result of message[%s] to Jira Service Management and it took %f seconds.", messageId, took.Seconds())
+			}
+		}()
+	}
+
 	if err != nil {
 		j.state = jobError
 		return errors.Errorf("Message[%s] could not be processed: %s", messageId, err)
 	}
-
-	go func() {
-		start := time.Now()
-
-		err = runbook.SendResultToJsmFunc(result, j.apiKey, j.baseUrl)
-		if err != nil {
-			logrus.Warnf("Could not send action result[%+v] of message[%s] to Jira Service Management: %s", result, messageId, err)
-		} else {
-			took := time.Since(start)
-			logrus.Debugf("Successfully sent result of message[%s] to Jira Service Management and it took %f seconds.", messageId, took.Seconds())
-		}
-	}()
 
 	j.state = jobFinished
 	return nil
