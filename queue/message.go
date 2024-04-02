@@ -39,39 +39,32 @@ func (mh *messageHandler) Handle(message sqs.Message) (*runbook.ActionResultPayl
 		return nil, err
 	}
 
-	entityId := queuePayload.Entity.Id
-	entityType := queuePayload.Entity.Type
-
 	actionType := queuePayload.ActionType
-
 	action := queuePayload.MappedAction.Name
 	if action == "" {
 		action = queuePayload.Action
 	}
 	if action == "" {
-		return nil, errors.Errorf("SQS message with entityId[%s] does not contain action property.", entityId)
-	}
-
-	mappedAction, ok := mh.actionSpecs.ActionMappings[conf.ActionName(action)]
-	if !ok {
-		return nil, errors.Errorf("There is no mapped action found for action[%s]. SQS message with entityId[%s] will be ignored.", action, entityId)
-	}
-
-	if mappedAction.Type != actionType {
-		return nil, errors.Errorf("The mapped action found for action[%s] with type[%s] but action is coming with type[%s]. SQS message with entityId[%s] will be ignored.",
-			action, mappedAction.Type, actionType, entityId)
+		return nil, errors.Errorf("SQS message does not contain action property.")
 	}
 
 	result := &runbook.ActionResultPayload{
-		EntityId:   entityId,
-		EntityType: entityType,
+		EntityId:   queuePayload.Entity.Id,
+		EntityType: queuePayload.Entity.Type,
 		Action:     action,
 		ActionType: actionType,
 		RequestId:  queuePayload.RequestId,
 	}
 
+	mappedAction, err := mh.resolveMappedAction(action, actionType)
+	if err != nil {
+		result.IsSuccessful = false
+		result.FailureMessage = err.Error()
+		return result, err
+	}
+
 	start := time.Now()
-	executionResult, callbackContext, err := mh.execute(&mappedAction, &message)
+	executionResult, callbackContext, err := mh.execute(mappedAction, &message)
 	took := time.Since(start)
 
 	result.CallbackContext = callbackContext
@@ -80,7 +73,7 @@ func (mh *messageHandler) Handle(message sqs.Message) (*runbook.ActionResultPayl
 	case *runbook.ExecError:
 		result.IsSuccessful = false
 		result.FailureMessage = fmt.Sprintf("Err: %s, Stderr: %s", err.Error(), err.Stderr)
-		logrus.Debugf("Action[%s] execution of message[%s] with entityId[%s] failed: %s Stderr: %s", action, *message.MessageId, entityId, err.Error(), err.Stderr)
+		logrus.Debugf("Action[%s] execution of message[%s] failed: %s Stderr: %s", action, *message.MessageId, err.Error(), err.Stderr)
 	case nil:
 		result.IsSuccessful = true
 		if !queuePayload.DiscardScriptResponse && queuePayload.ActionType == HttpActionType {
@@ -88,20 +81,38 @@ func (mh *messageHandler) Handle(message sqs.Message) (*runbook.ActionResultPayl
 			err := json.Unmarshal([]byte(executionResult), httpResult)
 			if err != nil {
 				result.IsSuccessful = false
-				logrus.Debugf("Http Action[%s] execution of message[%s] with entityId[%s] failed, could not parse http response fields: %s, error: %s",
-					action, *message.MessageId, entityId, executionResult, err.Error())
+				logrus.Debugf("Http Action[%s] execution of message[%s] failed, could not parse http response fields: %s, error: %s",
+					action, *message.MessageId, executionResult, err.Error())
 				result.FailureMessage = "Could not parse http response fields: " + executionResult
 			} else {
 				result.HttpResponse = httpResult
 			}
 		}
-		logrus.Debugf("Action[%s] execution of message[%s] with entityId[%s] has been completed and it took %f seconds.", action, *message.MessageId, entityId, took.Seconds())
+		logrus.Debugf("Action[%s] execution of message[%s] has been completed and it took %f seconds.", action, *message.MessageId, took.Seconds())
 
 	default:
 		return nil, err
 	}
 
 	return result, nil
+}
+
+func (mh *messageHandler) resolveMappedAction(action string, actionType string) (*conf.MappedAction, error) {
+	mappedAction, ok := mh.actionSpecs.ActionMappings[conf.ActionName(action)]
+
+	if !ok {
+		failureMessage := fmt.Sprintf("No mapped action is configured for requested action[%s]. "+
+			"The request will be ignored.", action)
+		return nil, errors.Errorf(failureMessage)
+	}
+
+	if mappedAction.Type != actionType {
+		failureMessage := fmt.Sprintf("The type[%s] of the mapped action[%s] is not compatible with requested type[%s]. "+
+			"The request will be ignored.", mappedAction.Type, action, actionType)
+		return nil, errors.Errorf(failureMessage)
+	}
+
+	return &mappedAction, nil
 }
 
 func (mh *messageHandler) execute(mappedAction *conf.MappedAction, message *sqs.Message) (string, string, error) {
