@@ -13,7 +13,10 @@ import (
 	"testing"
 )
 
-var mockActionResultPayload = &runbook.ActionResultPayload{Action: "MockAction"}
+var mockActionResultPayload = &runbook.ActionResultPayload{
+	Action:    "MockAction",
+	RequestId: "RequestId",
+}
 
 func newJobTest() *job {
 	mockMessageHandler := &MockMessageHandler{}
@@ -119,14 +122,36 @@ func TestExecuteInNotInitialState(t *testing.T) {
 }
 
 func TestExecuteWithProcessError(t *testing.T) {
+	wg := &sync.WaitGroup{}
+
+	errPayload := mockActionResultPayload
+	errPayload.IsSuccessful = true
+	errPayload.FailureMessage = "Process Error"
+
+	testServer := httptest.NewServer(http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
+		res.WriteHeader(http.StatusAccepted)
+
+		actionResult := &runbook.ActionResultPayload{}
+		body, _ := ioutil.ReadAll(req.Body)
+		json.Unmarshal(body, actionResult)
+
+		assert.Equal(t, errPayload, actionResult)
+		assert.Equal(t, "GenieKey "+mockApiKey, req.Header.Get("Authorization"))
+		wg.Done()
+	}))
+	defer testServer.Close()
 
 	sqsJob := newJobTest()
+	sqsJob.baseUrl = testServer.URL
 
 	sqsJob.messageHandler.(*MockMessageHandler).HandleFunc = func(message sqs.Message) (payload *runbook.ActionResultPayload, e error) {
-		return nil, errors.New("Process Error")
+		return errPayload, errors.New("Process Error")
 	}
 
+	wg.Add(1)
 	err := sqsJob.Execute()
+
+	wg.Wait()
 	assert.NotNil(t, err)
 
 	expectedErr := errors.Errorf("Message[%s] could not be processed: %s", sqsJob.Id(), "Process Error")

@@ -126,13 +126,21 @@ func testProcessMappedActionNotFound(t *testing.T) {
 
 	runbook.ExecuteFunc = mockExecute
 
-	body := `{"action":"Ack"}`
+	body := `{"actionType":"custom", "action":"Ack", "requestId": "RequestId"}`
 	message := sqs.Message{Body: &body}
 	messageHandler := NewMessageHandler(nil, mockActionSpecs, mockActionLoggers)
 
-	_, err := messageHandler.Handle(message)
-	expectedErr := errors.New("There is no mapped action found for action[Ack]. SQS message with entityId[] will be ignored.")
+	result, err := messageHandler.Handle(message)
+	expectedErr := errors.New("No mapped action is configured for requested action[Ack]. The request will be ignored.")
+	expectedResult := &runbook.ActionResultPayload{
+		Action:         "Ack",
+		ActionType:     "custom",
+		RequestId:      "RequestId",
+		IsSuccessful:   false,
+		FailureMessage: "No mapped action is configured for requested action[Ack]. The request will be ignored.",
+	}
 	assert.EqualError(t, err, expectedErr.Error())
+	assert.Equal(t, result, expectedResult)
 }
 
 func testProcessActionTypeNotMatched(t *testing.T) {
@@ -142,10 +150,19 @@ func testProcessActionTypeNotMatched(t *testing.T) {
 	message := sqs.Message{Body: &body}
 	messageHandler := NewMessageHandler(nil, mockActionSpecs, mockActionLoggers)
 
-	_, err := messageHandler.Handle(message)
-	expectedErr := errors.New("The mapped action found for action[Close] with type[custom] but action is coming with type[http]. " +
-		"SQS message with entityId[] will be ignored.")
+	result, err := messageHandler.Handle(message)
+	expectedErr := errors.New("The type[custom] of the mapped action[Close] is not compatible with requested type[http]. " +
+		"The request will be ignored.")
+	expectedResult := &runbook.ActionResultPayload{
+		Action:       "Close",
+		ActionType:   "http",
+		RequestId:    "RequestId",
+		IsSuccessful: false,
+		FailureMessage: "The type[custom] of the mapped action[Close] is not compatible with requested type[http]. " +
+			"The request will be ignored.",
+	}
 	assert.EqualError(t, err, expectedErr.Error())
+	assert.Equal(t, result, expectedResult)
 }
 
 func testProcessFieldMissing(t *testing.T) {
@@ -157,7 +174,7 @@ func testProcessFieldMissing(t *testing.T) {
 	messageHandler := NewMessageHandler(nil, mockActionSpecs, mockActionLoggers)
 
 	_, err := messageHandler.Handle(message)
-	expectedErr := errors.New("SQS message with entityId[] does not contain action property.")
+	expectedErr := errors.New("SQS message does not contain action property.")
 	assert.EqualError(t, err, expectedErr.Error())
 }
 

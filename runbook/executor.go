@@ -2,7 +2,6 @@ package runbook
 
 import (
 	"bytes"
-	"github.com/sirupsen/logrus"
 	"io"
 	"os"
 	"os/exec"
@@ -73,6 +72,5 @@ func Execute(executionId string, executablePath string, args, environmentVars []
 	}
 
 	callbackContext := bytes.NewBuffer(bytes.Trim(callbackContextHandler.callbackContextBuffer, "\x00")).String()
-	logrus.Debug("Callback context: " + callbackContext)
 	return callbackContext, nil
 }
