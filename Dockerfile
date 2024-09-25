@@ -1,8 +1,10 @@
 FROM golang:1.14 as builder
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
 ADD . $GOPATH/src/github.com/atlassian/jec
 WORKDIR $GOPATH/src/github.com/atlassian/jec/main
 RUN export GIT_COMMIT=$(git rev-list -1 HEAD) && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -installsuffix cgo \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -a -installsuffix cgo \
         -ldflags "-X main.JECCommitVersion=$GIT_COMMIT -X main.JECVersion=1.0.1" -o nocgo -o /jec .
 FROM python:alpine3.16 as base
 RUN pip install requests
