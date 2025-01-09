@@ -19,7 +19,7 @@ type CallbackContextHandlerWindows struct {
 func NewCallbackContextHandler(executionId string) *CallbackContextHandlerWindows {
 	return &CallbackContextHandlerWindows{
 		pipePath:              `\\.\pipe\jecCallbackPipe-` + executionId,
-		callbackContextBuffer: make([]byte, 4096),
+		callbackContextBuffer: make([]byte, 16384), // 16kB
 		pipeOpenedByScript:    false,
 	}
 }

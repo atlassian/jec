@@ -20,7 +20,7 @@ type CallbackContextHandlerUnix struct {
 func NewCallbackContextHandler(executionId string) *CallbackContextHandlerUnix {
 	return &CallbackContextHandlerUnix{
 		pipePath:              filepath.Join("/var", "tmp", "jec", `jecCallbackPipe-`+executionId),
-		callbackContextBuffer: make([]byte, 4096),
+		callbackContextBuffer: make([]byte, 16384), // 16 kB
 		pipeOpenedByScript:    false,
 	}
 }
