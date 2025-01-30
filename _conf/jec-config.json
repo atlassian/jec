@@ -1,0 +1,27 @@
+{
+  "apiKey": "e5061f1f-f545-4eeb-8ef9-7fa3e4734e0d",
+  "baseUrl": "https://api.atlassian.com",
+  "logLevel": "DEBUG",
+  "globalFlags": {
+  },
+  "actionMappings": {
+    "jec-test": {
+      "filepath": "/home/jsm/example.py",
+      "sourceType": "local",
+      "stdout": "/home/jsm/example.out",
+      "stderr": "/home/jsm/example.err"
+    }
+  },
+  "pollerConf": {
+    "pollingWaitIntervalInMillis": 100,
+    "visibilityTimeoutInSec": 30,
+    "maxNumberOfMessages": 10
+  },
+  "poolConf": {
+    "maxNumberOfWorker": 12,
+    "minNumberOfWorker": 4,
+    "monitoringPeriodInMillis": 15000,
+    "keepAliveTimeInMillis": 6000,
+    "queueSize": 0
+  }
+}
