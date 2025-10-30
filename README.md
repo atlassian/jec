@@ -29,6 +29,7 @@ JEC provides the ability to retrieve files from Git.
 Configuration files for JEC can be maintained in Git to ensure version control. Likewise, scripts and credentials can be kept in Git and retrieved when needed so that credentials are not stored locally.
 
 ## Installation
+Visit [installation steps](https://support.atlassian.com/jira-service-management-cloud/docs/install-jira-edge-connector/) on different environments.
 
 ### Environment Variables
 
@@ -49,7 +50,7 @@ From reading configuration files from a git repository:
 
 ```If you are using a public repository, you should use an https format of a git url and you do not need to set private key and passphrase.```
 
-For more information, you can visit [JEC documentation page]() // TODO: Add link
+For more information, you can visit [JEC documentation page](https://support.atlassian.com/jira-service-management-cloud/docs/configure-jira-edge-connector/)
 ### Flag
 Prometheus default metrics can be grabbed from `http://localhost:<port-number>/metrics`
 
@@ -66,7 +67,7 @@ JEC log file is located:
 ### Configuration File
 JEC supports json and yaml file extension with fields.
 
-For definition of all fields which should be provided in configuration file, you can visit [JEC documentation page]() // TODO: Add link
+For definition of all fields which should be provided in configuration file, you can visit [JEC documentation page](https://support.atlassian.com/jira-service-management-cloud/docs/configure-jira-edge-connector/)
 
 ## Usage
 
@@ -74,7 +75,7 @@ You can run executable that you build according the building JEC executables sec
 ```
 JEC_CONF_SOURCE_TYPE=LOCAL JEC_CONF_LOCAL_FILEPATH=$JEC_FILE_PATH ./main
 ```
-Also you can run JEC by using Docker. For more information, please visit [documentation]() // TODO: Add link
+Also you can run JEC by using Docker. For more information, please visit [documentation](https://support.atlassian.com/jira-service-management-cloud/docs/run-jira-edge-connector/)
 
 ## Tests
 
