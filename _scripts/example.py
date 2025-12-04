@@ -24,7 +24,7 @@ def readValue(key):
 def writeCallback(callbackJson):
 	pipe_path = args.get("jecNamedPipe")
 	with open(pipe_path, "w") as pipe:
-		pipe.write(str(callbackJson))
+		pipe.write(json.dumps(callbackJson))
 		pipe.close()
 
 testValue = readValue("test-key")
