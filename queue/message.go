@@ -13,8 +13,15 @@ import (
 	"time"
 )
 
+// Message represents a message fetched from the JEC Platform API.
+type Message struct {
+	MessageId string `json:"messageId"`
+	Body      string `json:"body"`
+	ChannelId string `json:"channelId"`
+}
+
 type MessageHandler interface {
-	Handle(message JECMessage) (*runbook.ActionResultPayload, error)
+	Handle(message Message) (*runbook.ActionResultPayload, error)
 }
 
 type messageHandler struct {
@@ -31,7 +38,7 @@ func NewMessageHandler(repositories git.Repositories, actionSpecs conf.ActionSpe
 	}
 }
 
-func (mh *messageHandler) Handle(message JECMessage) (*runbook.ActionResultPayload, error) {
+func (mh *messageHandler) Handle(message Message) (*runbook.ActionResultPayload, error) {
 	queuePayload := payload{}
 	err := json.Unmarshal([]byte(message.Body), &queuePayload)
 	if err != nil {
@@ -114,7 +121,7 @@ func (mh *messageHandler) resolveMappedAction(action string, actionType string) 
 	return &mappedAction, nil
 }
 
-func (mh *messageHandler) execute(mappedAction *conf.MappedAction, message *JECMessage) (string, string, error) {
+func (mh *messageHandler) execute(mappedAction *conf.MappedAction, message *Message) (string, string, error) {
 
 	sourceType := mappedAction.SourceType
 	switch sourceType {

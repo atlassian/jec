@@ -18,7 +18,6 @@ import (
 
 var mockPollerConf = &conf.PollerConf{
 	PollingWaitIntervalInMillis: pollingWaitIntervalInMillis,
-	VisibilityTimeoutInSeconds:  visibilityTimeoutInSec,
 	MaxNumberOfMessages:         maxNumberOfMessages,
 }
 
@@ -43,7 +42,7 @@ func newPollerTest() *poller {
 	}
 }
 
-func mockFetchMessages(messages []*JECMessage, err error) func(r *retryer.Retryer, request *retryer.Request) (*http.Response, error) {
+func mockFetchMessages(messages []*Message, err error) func(r *retryer.Retryer, request *retryer.Request) (*http.Response, error) {
 	return func(r *retryer.Retryer, request *retryer.Request) (*http.Response, error) {
 		if err != nil {
 			return nil, err
@@ -115,7 +114,7 @@ func TestPollZeroMessage(t *testing.T) {
 	poller.workerPool.(*MockWorkerPool).NumberOfAvailableWorkerFunc = func() int32 {
 		return 1
 	}
-	poller.retryer.DoFunc = mockFetchMessages([]*JECMessage{}, nil)
+	poller.retryer.DoFunc = mockFetchMessages([]*Message{}, nil)
 
 	logrus.SetLevel(logrus.DebugLevel)
 	shouldWait := poller.poll()
@@ -132,9 +131,9 @@ func TestPollMaxMessage(t *testing.T) {
 		return int32(expected)
 	}
 
-	messages := make([]*JECMessage, expected)
+	messages := make([]*Message, expected)
 	for i := int64(0); i < expected; i++ {
-		messages[i] = &JECMessage{
+		messages[i] = &Message{
 			MessageId: strconv.FormatInt(i, 10),
 			Body:      "body",
 			ChannelId: mockChannelId,
@@ -164,9 +163,9 @@ func TestPollMaxMessageUpperBound(t *testing.T) {
 	}
 
 	// API returns more messages than maxNumberOfMessages, poller should cap
-	messages := make([]*JECMessage, 20)
+	messages := make([]*Message, 20)
 	for i := 0; i < 20; i++ {
-		messages[i] = &JECMessage{
+		messages[i] = &Message{
 			MessageId: strconv.FormatInt(int64(i), 10),
 			Body:      "body",
 			ChannelId: mockChannelId,
@@ -195,9 +194,9 @@ func TestPollMessageSubmitFail(t *testing.T) {
 		return int32(expected)
 	}
 
-	messages := make([]*JECMessage, expected)
+	messages := make([]*Message, expected)
 	for i := int64(0); i < expected; i++ {
-		messages[i] = &JECMessage{
+		messages[i] = &Message{
 			MessageId: strconv.FormatInt(i, 10),
 			Body:      "body",
 			ChannelId: mockChannelId,
@@ -227,9 +226,9 @@ func TestPollMessageSubmitError(t *testing.T) {
 		return int32(expected)
 	}
 
-	messages := make([]*JECMessage, expected)
+	messages := make([]*Message, expected)
 	for i := int64(0); i < expected; i++ {
-		messages[i] = &JECMessage{
+		messages[i] = &Message{
 			MessageId: strconv.FormatInt(i, 10),
 			Body:      "body",
 			ChannelId: mockChannelId,
@@ -257,9 +256,9 @@ func TestPollMessageSubmitSuccess(t *testing.T) {
 		return 5
 	}
 
-	messages := make([]*JECMessage, 5)
+	messages := make([]*Message, 5)
 	for i := 0; i < 5; i++ {
-		messages[i] = &JECMessage{
+		messages[i] = &Message{
 			MessageId: strconv.FormatInt(int64(i), 10),
 			Body:      "body",
 			ChannelId: mockChannelId,

@@ -99,7 +99,7 @@ func (p *poller) Stop() error {
 	return nil
 }
 
-func (p *poller) fetchMessages(maxNumberOfMessages int64) ([]*JECMessage, error) {
+func (p *poller) fetchMessages(maxNumberOfMessages int64) ([]*Message, error) {
 
 	url := fmt.Sprintf("%s%s%s", p.conf.BaseUrl, messagesPath, p.channelId)
 
@@ -127,7 +127,7 @@ func (p *poller) fetchMessages(maxNumberOfMessages int64) ([]*JECMessage, error)
 		return nil, err
 	}
 
-	var messages []*JECMessage
+	var messages []*Message
 	err = json.Unmarshal(body, &messages)
 	if err != nil {
 		return nil, err

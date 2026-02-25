@@ -62,7 +62,6 @@ func TestValidateNewQueueProcessor(t *testing.T) {
 	processor := NewProcessor(configuration).(*processor)
 
 	assert.Equal(t, int64(maxNumberOfMessages), processor.configuration.PollerConf.MaxNumberOfMessages)
-	assert.Equal(t, int64(visibilityTimeoutInSec), processor.configuration.PollerConf.VisibilityTimeoutInSeconds)
 	assert.Equal(t, time.Duration(pollingWaitIntervalInMillis), processor.configuration.PollerConf.PollingWaitIntervalInMillis)
 }
 

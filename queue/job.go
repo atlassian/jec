@@ -18,7 +18,7 @@ const (
 type job struct {
 	messageHandler MessageHandler
 
-	message JECMessage
+	message Message
 	apiKey  string
 	baseUrl string
 
@@ -26,7 +26,7 @@ type job struct {
 	executeMutex *sync.Mutex
 }
 
-func newJob(messageHandler MessageHandler, message JECMessage, apiKey, baseUrl string) *job {
+func newJob(messageHandler MessageHandler, message Message, apiKey, baseUrl string) *job {
 	return &job{
 		messageHandler: messageHandler,
 		message:        message,
