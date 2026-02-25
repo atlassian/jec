@@ -3,7 +3,6 @@ package queue
 import (
 	"encoding/json"
 	"github.com/atlassian/jec/runbook"
-	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"io/ioutil"
@@ -20,27 +19,22 @@ var mockActionResultPayload = &runbook.ActionResultPayload{
 
 func newJobTest() *job {
 	mockMessageHandler := &MockMessageHandler{}
-	mockMessageHandler.HandleFunc = func(message sqs.Message) (payload *runbook.ActionResultPayload, e error) {
+	mockMessageHandler.HandleFunc = func(message JECMessage) (payload *runbook.ActionResultPayload, e error) {
 		return mockActionResultPayload, nil
 	}
 
-	body := "mockBody"
-	messageAttr := map[string]*sqs.MessageAttributeValue{ownerId: {StringValue: &mockOwnerId}}
-
-	message := sqs.Message{
-		MessageId:         &mockMessageId,
-		Body:              &body,
-		MessageAttributes: messageAttr,
+	message := JECMessage{
+		MessageId: mockMessageId,
+		Body:      "mockBody",
+		ChannelId: mockChannelId,
 	}
 
 	return &job{
-		queueProvider:  NewMockQueueProvider(),
 		messageHandler: mockMessageHandler,
 		message:        message,
 		executeMutex:   &sync.Mutex{},
 		apiKey:         mockApiKey,
 		baseUrl:        mockBaseUrl,
-		ownerId:        mockOwnerId,
 		state:          jobInitial,
 	}
 }
@@ -61,17 +55,17 @@ func TestExecute(t *testing.T) {
 	}))
 	defer testServer.Close()
 
-	sqsJob := newJobTest()
-	sqsJob.baseUrl = testServer.URL
+	jecJob := newJobTest()
+	jecJob.baseUrl = testServer.URL
 
 	wg.Add(1)
-	err := sqsJob.Execute()
+	err := jecJob.Execute()
 
 	wg.Wait()
 	assert.Nil(t, err)
 
 	expectedState := int32(jobFinished)
-	actualState := sqsJob.state
+	actualState := jecJob.state
 
 	assert.Equal(t, expectedState, actualState)
 }
@@ -85,8 +79,8 @@ func TestMultipleExecute(t *testing.T) {
 	}))
 	defer testServer.Close()
 
-	sqsJob := newJobTest()
-	sqsJob.baseUrl = testServer.URL
+	jecJob := newJobTest()
+	jecJob.baseUrl = testServer.URL
 
 	errorResults := make(chan error, 25)
 
@@ -94,16 +88,16 @@ func TestMultipleExecute(t *testing.T) {
 	for i := 0; i < 25; i++ {
 		go func() {
 			defer wg.Done()
-			err := sqsJob.Execute()
+			err := jecJob.Execute()
 			if err != nil {
-				errorResults <- sqsJob.Execute()
+				errorResults <- jecJob.Execute()
 			}
 		}()
 	}
 
 	wg.Wait()
 	expectedState := int32(jobFinished)
-	actualState := sqsJob.state
+	actualState := jecJob.state
 
 	assert.Equal(t, expectedState, actualState) // only one execute finished
 	assert.Equal(t, 24, len(errorResults))      // other executes will fail
@@ -111,13 +105,13 @@ func TestMultipleExecute(t *testing.T) {
 
 func TestExecuteInNotInitialState(t *testing.T) {
 
-	sqsJob := newJobTest()
-	sqsJob.state = jobExecuting
+	jecJob := newJobTest()
+	jecJob.state = jobExecuting
 
-	err := sqsJob.Execute()
+	err := jecJob.Execute()
 	assert.NotNil(t, err)
 
-	expectedErr := errors.Errorf("Job[%s] is already executing or finished.", sqsJob.Id())
+	expectedErr := errors.Errorf("Job[%s] is already executing or finished.", jecJob.Id())
 	assert.EqualError(t, err, expectedErr.Error())
 }
 
@@ -141,64 +135,24 @@ func TestExecuteWithProcessError(t *testing.T) {
 	}))
 	defer testServer.Close()
 
-	sqsJob := newJobTest()
-	sqsJob.baseUrl = testServer.URL
+	jecJob := newJobTest()
+	jecJob.baseUrl = testServer.URL
 
-	sqsJob.messageHandler.(*MockMessageHandler).HandleFunc = func(message sqs.Message) (payload *runbook.ActionResultPayload, e error) {
+	jecJob.messageHandler.(*MockMessageHandler).HandleFunc = func(message JECMessage) (payload *runbook.ActionResultPayload, e error) {
 		return errPayload, errors.New("Process Error")
 	}
 
 	wg.Add(1)
-	err := sqsJob.Execute()
+	err := jecJob.Execute()
 
 	wg.Wait()
 	assert.NotNil(t, err)
 
-	expectedErr := errors.Errorf("Message[%s] could not be processed: %s", sqsJob.Id(), "Process Error")
+	expectedErr := errors.Errorf("Message[%s] could not be processed: %s", jecJob.Id(), "Process Error")
 	assert.EqualError(t, err, expectedErr.Error())
 
 	expectedState := int32(jobError)
-	actualState := sqsJob.state
-
-	assert.Equal(t, expectedState, actualState)
-}
-
-func TestExecuteWithDeleteError(t *testing.T) {
-
-	sqsJob := newJobTest()
-
-	sqsJob.queueProvider.(*MockSQSProvider).DeleteMessageFunc = func(message *sqs.Message) error {
-		return errors.New("Delete Error")
-	}
-
-	err := sqsJob.Execute()
-	assert.NotNil(t, err)
-
-	expectedErr := errors.Errorf("Message[%s] could not be deleted from the queue[%s]: %s", sqsJob.Id(), sqsJob.queueProvider.Properties().Region(), "Delete Error")
-	assert.EqualError(t, err, expectedErr.Error())
-
-	expectedState := int32(jobError)
-	actualState := sqsJob.state
-
-	assert.Equal(t, expectedState, actualState)
-}
-
-func TestExecuteWithInvalidQueueMessage(t *testing.T) {
-
-	sqsJob := newJobTest()
-
-	falseIntegrationId := "falseIntegrationId"
-	messageAttr := map[string]*sqs.MessageAttributeValue{ownerId: {StringValue: &falseIntegrationId}, channelId: {StringValue: &falseIntegrationId}}
-	sqsJob.message = sqs.Message{MessageAttributes: messageAttr, MessageId: &mockMessageId}
-
-	err := sqsJob.Execute()
-	assert.NotNil(t, err)
-
-	expectedErr := errors.Errorf("Message[%s] is invalid, will not be processed.", sqsJob.Id())
-	assert.EqualError(t, err, expectedErr.Error())
-
-	expectedState := int32(jobError)
-	actualState := sqsJob.state
+	actualState := jecJob.state
 
 	assert.Equal(t, expectedState, actualState)
 }

@@ -2,7 +2,6 @@ package queue
 
 import (
 	"github.com/atlassian/jec/runbook"
-	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"sync"
@@ -17,11 +16,9 @@ const (
 )
 
 type job struct {
-	queueProvider  SQSProvider
 	messageHandler MessageHandler
 
-	message sqs.Message
-	ownerId string
+	message JECMessage
 	apiKey  string
 	baseUrl string
 
@@ -29,12 +26,10 @@ type job struct {
 	executeMutex *sync.Mutex
 }
 
-func newJob(queueProvider SQSProvider, messageHandler MessageHandler, message sqs.Message, apiKey, baseUrl, ownerId string) *job {
+func newJob(messageHandler MessageHandler, message JECMessage, apiKey, baseUrl string) *job {
 	return &job{
-		queueProvider:  queueProvider,
 		messageHandler: messageHandler,
 		message:        message,
-		ownerId:        ownerId,
 		apiKey:         apiKey,
 		baseUrl:        baseUrl,
 		state:          jobInitial,
@@ -43,11 +38,7 @@ func newJob(queueProvider SQSProvider, messageHandler MessageHandler, message sq
 }
 
 func (j *job) Id() string {
-	return *j.message.MessageId
-}
-
-func (j *job) sqsMessage() sqs.Message {
-	return j.message
+	return j.message.MessageId
 }
 
 func (j *job) Execute() error {
@@ -60,25 +51,7 @@ func (j *job) Execute() error {
 	}
 	j.state = jobExecuting
 
-	region := j.queueProvider.Properties().Region()
 	messageId := j.Id()
-
-	err := j.queueProvider.DeleteMessage(&j.message)
-	if err != nil {
-		j.state = jobError
-		return errors.Errorf("Message[%s] could not be deleted from the queue[%s]: %s", messageId, region, err)
-	}
-
-	logrus.Debugf("Message[%s] is deleted from the queue[%s].", messageId, region)
-
-	messageAttr := j.sqsMessage().MessageAttributes
-
-	if messageAttr == nil ||
-		*messageAttr[ownerId].StringValue != j.ownerId &&
-			*messageAttr[channelId].StringValue != j.ownerId {
-		j.state = jobError
-		return errors.Errorf("Message[%s] is invalid, will not be processed.", messageId)
-	}
 
 	result, err := j.messageHandler.Handle(j.message)
 

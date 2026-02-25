@@ -1,20 +1,25 @@
 package queue
 
 import (
+	"bytes"
+	"encoding/json"
 	"github.com/atlassian/jec/conf"
+	"github.com/atlassian/jec/retryer"
 	"github.com/atlassian/jec/worker_pool"
-	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"io/ioutil"
+	"net/http"
+	"strconv"
 	"sync"
 	"testing"
 )
 
 var mockPollerConf = &conf.PollerConf{
-	pollingWaitIntervalInMillis,
-	visibilityTimeoutInSec,
-	maxNumberOfMessages,
+	PollingWaitIntervalInMillis: pollingWaitIntervalInMillis,
+	VisibilityTimeoutInSeconds:  visibilityTimeoutInSec,
+	MaxNumberOfMessages:         maxNumberOfMessages,
 }
 
 func newPollerTest() *poller {
@@ -30,11 +35,24 @@ func newPollerTest() *poller {
 			PollerConf:           *mockPollerConf,
 			ActionSpecifications: mockActionSpecs,
 		},
-
+		channelId:          mockChannelId,
 		workerPool:         NewMockWorkerPool(),
-		queueProvider:      NewMockQueueProvider(),
 		messageHandler:     NewMockMessageHandler(),
+		retryer:            &retryer.Retryer{},
 		queueMessageLogrus: &logrus.Logger{},
+	}
+}
+
+func mockFetchMessages(messages []*JECMessage, err error) func(r *retryer.Retryer, request *retryer.Request) (*http.Response, error) {
+	return func(r *retryer.Retryer, request *retryer.Request) (*http.Response, error) {
+		if err != nil {
+			return nil, err
+		}
+		body, _ := json.Marshal(messages)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       ioutil.NopCloser(bytes.NewReader(body)),
+		}, nil
 	}
 }
 
@@ -84,9 +102,7 @@ func TestPollWithReceiveError(t *testing.T) {
 	poller.workerPool.(*MockWorkerPool).NumberOfAvailableWorkerFunc = func() int32 {
 		return 1
 	}
-	poller.queueProvider.(*MockSQSProvider).ReceiveMessageFunc = func(i int64, i2 int64) ([]*sqs.Message, error) {
-		return nil, errors.New("")
-	}
+	poller.retryer.DoFunc = mockFetchMessages(nil, errors.New(""))
 
 	shouldWait := poller.poll()
 	assert.True(t, shouldWait)
@@ -99,9 +115,7 @@ func TestPollZeroMessage(t *testing.T) {
 	poller.workerPool.(*MockWorkerPool).NumberOfAvailableWorkerFunc = func() int32 {
 		return 1
 	}
-	poller.queueProvider.(*MockSQSProvider).ReceiveMessageFunc = func(i int64, i2 int64) ([]*sqs.Message, error) {
-		return []*sqs.Message{}, nil
-	}
+	poller.retryer.DoFunc = mockFetchMessages([]*JECMessage{}, nil)
 
 	logrus.SetLevel(logrus.DebugLevel)
 	shouldWait := poller.poll()
@@ -112,54 +126,84 @@ func TestPollMaxMessage(t *testing.T) {
 
 	poller := newPollerTest()
 
-	expected := 4
+	expected := int64(4)
 
 	poller.workerPool.(*MockWorkerPool).NumberOfAvailableWorkerFunc = func() int32 {
 		return int32(expected)
 	}
 
-	maxNumberOfMessages := 0
-	poller.queueProvider.(*MockSQSProvider).ReceiveMessageFunc = func(numOfMessage int64, visibilityTimeout int64) ([]*sqs.Message, error) {
-		maxNumberOfMessages = int(numOfMessage)
-		return nil, errors.New("Receive Error")
+	messages := make([]*JECMessage, expected)
+	for i := int64(0); i < expected; i++ {
+		messages[i] = &JECMessage{
+			MessageId: strconv.FormatInt(i, 10),
+			Body:      "body",
+			ChannelId: mockChannelId,
+		}
+	}
+	poller.retryer.DoFunc = mockFetchMessages(messages, nil)
+
+	submitCount := 0
+	poller.workerPool.(*MockWorkerPool).SubmitFunc = func(job worker_pool.Job) (bool, error) {
+		submitCount++
+		return true, nil
 	}
 
 	shouldWait := poller.poll()
-	assert.True(t, shouldWait)
-	assert.Equal(t, expected, maxNumberOfMessages)
+	assert.False(t, shouldWait)
+	assert.Equal(t, int(expected), submitCount)
 }
 
 func TestPollMaxMessageUpperBound(t *testing.T) {
 
 	poller := newPollerTest()
 
-	availableWorkerCount := 12
+	availableWorkerCount := int64(12)
 
 	poller.workerPool.(*MockWorkerPool).NumberOfAvailableWorkerFunc = func() int32 {
 		return int32(availableWorkerCount)
 	}
 
-	maxNumberOfMessages := int64(0)
-	poller.queueProvider.(*MockSQSProvider).ReceiveMessageFunc = func(numOfMessage int64, visibilityTimeout int64) ([]*sqs.Message, error) {
-		maxNumberOfMessages = numOfMessage
-		return nil, errors.New("Receive Error")
+	// API returns more messages than maxNumberOfMessages, poller should cap
+	messages := make([]*JECMessage, 20)
+	for i := 0; i < 20; i++ {
+		messages[i] = &JECMessage{
+			MessageId: strconv.FormatInt(int64(i), 10),
+			Body:      "body",
+			ChannelId: mockChannelId,
+		}
+	}
+	poller.retryer.DoFunc = mockFetchMessages(messages, nil)
+
+	submitCount := 0
+	poller.workerPool.(*MockWorkerPool).SubmitFunc = func(job worker_pool.Job) (bool, error) {
+		submitCount++
+		return true, nil
 	}
 
 	shouldWait := poller.poll()
-	assert.True(t, shouldWait)
-	assert.Equal(t, poller.conf.PollerConf.MaxNumberOfMessages, maxNumberOfMessages)
+	assert.False(t, shouldWait)
+	assert.Equal(t, int(poller.conf.PollerConf.MaxNumberOfMessages), submitCount)
 }
 
 func TestPollMessageSubmitFail(t *testing.T) {
 
 	poller := newPollerTest()
 
-	expected := 4
+	expected := int64(4)
 
 	poller.workerPool.(*MockWorkerPool).NumberOfAvailableWorkerFunc = func() int32 {
 		return int32(expected)
 	}
-	poller.queueProvider.(*MockSQSProvider).ReceiveMessageFunc = mockSuccessReceiveFunc
+
+	messages := make([]*JECMessage, expected)
+	for i := int64(0); i < expected; i++ {
+		messages[i] = &JECMessage{
+			MessageId: strconv.FormatInt(i, 10),
+			Body:      "body",
+			ChannelId: mockChannelId,
+		}
+	}
+	poller.retryer.DoFunc = mockFetchMessages(messages, nil)
 
 	submitCount := 0
 	poller.workerPool.(*MockWorkerPool).SubmitFunc = func(job worker_pool.Job) (bool, error) {
@@ -167,31 +211,31 @@ func TestPollMessageSubmitFail(t *testing.T) {
 		return false, nil
 	}
 
-	releaseCount := 0
-	poller.queueProvider.(*MockSQSProvider).ChangeMessageVisibilityFunc = func(message *sqs.Message, visibilityTimeout int64) error {
-		if visibilityTimeout == 0 {
-			releaseCount++
-		}
-		return nil
-	}
-
 	shouldWait := poller.poll()
 
 	assert.False(t, shouldWait)
-	assert.Equal(t, expected, submitCount)
-	assert.Equal(t, expected, releaseCount)
+	assert.Equal(t, int(expected), submitCount)
 }
 
 func TestPollMessageSubmitError(t *testing.T) {
 
 	poller := newPollerTest()
 
-	expected := 5
+	expected := int64(5)
 
 	poller.workerPool.(*MockWorkerPool).NumberOfAvailableWorkerFunc = func() int32 {
 		return int32(expected)
 	}
-	poller.queueProvider.(*MockSQSProvider).ReceiveMessageFunc = mockSuccessReceiveFunc
+
+	messages := make([]*JECMessage, expected)
+	for i := int64(0); i < expected; i++ {
+		messages[i] = &JECMessage{
+			MessageId: strconv.FormatInt(i, 10),
+			Body:      "body",
+			ChannelId: mockChannelId,
+		}
+	}
+	poller.retryer.DoFunc = mockFetchMessages(messages, nil)
 
 	submitCount := 0
 	poller.workerPool.(*MockWorkerPool).SubmitFunc = func(job worker_pool.Job) (bool, error) {
@@ -199,19 +243,10 @@ func TestPollMessageSubmitError(t *testing.T) {
 		return false, errors.New("Submit Error")
 	}
 
-	releaseCount := 0
-	poller.queueProvider.(*MockSQSProvider).ChangeMessageVisibilityFunc = func(message *sqs.Message, visibilityTimeout int64) error {
-		if visibilityTimeout == 0 {
-			releaseCount++
-		}
-		return nil
-	}
-
 	shouldWait := poller.poll()
 
 	assert.True(t, shouldWait)
 	assert.Equal(t, 1, submitCount)
-	assert.Equal(t, expected, releaseCount)
 }
 
 func TestPollMessageSubmitSuccess(t *testing.T) {
@@ -221,7 +256,16 @@ func TestPollMessageSubmitSuccess(t *testing.T) {
 	poller.workerPool.(*MockWorkerPool).NumberOfAvailableWorkerFunc = func() int32 {
 		return 5
 	}
-	poller.queueProvider.(*MockSQSProvider).ReceiveMessageFunc = mockSuccessReceiveFunc
+
+	messages := make([]*JECMessage, 5)
+	for i := 0; i < 5; i++ {
+		messages[i] = &JECMessage{
+			MessageId: strconv.FormatInt(int64(i), 10),
+			Body:      "body",
+			ChannelId: mockChannelId,
+		}
+	}
+	poller.retryer.DoFunc = mockFetchMessages(messages, nil)
 
 	poller.workerPool.(*MockWorkerPool).SubmitFunc = func(job worker_pool.Job) (bool, error) {
 		return true, nil
@@ -236,17 +280,15 @@ func TestPollMessageSubmitSuccess(t *testing.T) {
 type MockPoller struct {
 	StartPollingFunc func() error
 	StopPollingFunc  func() error
-
-	RefreshClientFunc func(assumeRoleResult AssumeRoleResult) error
-	QueueProviderFunc func() SQSProvider
+	ChannelIdFunc    func() string
 }
 
 func NewMockPoller() Poller {
 	return &MockPoller{}
 }
 
-func NewMockPollerForQueueProcessor(workerPool worker_pool.WorkerPool, queueProvider SQSProvider,
-	messageHandler MessageHandler, conf *conf.Configuration, ownerId string) Poller {
+func NewMockPollerForQueueProcessor(workerPool worker_pool.WorkerPool,
+	messageHandler MessageHandler, conf *conf.Configuration, channelId string) Poller {
 	return NewMockPoller()
 }
 
@@ -264,16 +306,9 @@ func (p *MockPoller) Stop() error {
 	return nil
 }
 
-func (p *MockPoller) RefreshClient(assumeRoleResult AssumeRoleResult) error {
-	if p.RefreshClientFunc != nil {
-		return p.RefreshClientFunc(assumeRoleResult)
+func (p *MockPoller) ChannelId() string {
+	if p.ChannelIdFunc != nil {
+		return p.ChannelIdFunc()
 	}
-	return nil
-}
-
-func (p *MockPoller) QueueProvider() SQSProvider {
-	if p.QueueProviderFunc != nil {
-		return p.QueueProviderFunc()
-	}
-	return NewMockQueueProvider()
+	return mockChannelId
 }
