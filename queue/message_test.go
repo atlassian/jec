@@ -5,7 +5,6 @@ import (
 	"github.com/atlassian/jec/conf"
 	"github.com/atlassian/jec/git"
 	"github.com/atlassian/jec/runbook"
-	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"io"
@@ -81,8 +80,7 @@ func TestProcess(t *testing.T) {
 func testProcessSuccessfully(t *testing.T) {
 
 	body := `{"action":"Create", "requestId": "RequestId"}`
-	id := "MessageId"
-	message := sqs.Message{Body: &body, MessageId: &id}
+	message := JECMessage{Body: body, MessageId: "MessageId"}
 	queueMessage := NewMessageHandler(nil, mockActionSpecs, mockActionLoggers)
 
 	runbook.ExecuteFunc = func(executionId string, executablePath string, args, environmentVars []string, stdout, stderr io.Writer) (string, error) {
@@ -105,8 +103,7 @@ func testProcessHttpActionSuccessfully(t *testing.T) {
 	}
 
 	body := `{"actionType":"http", "action":"Retrieve", "requestId": "RequestId"}`
-	id := "MessageId"
-	message := sqs.Message{Body: &body, MessageId: &id}
+	message := JECMessage{Body: body, MessageId: "MessageId"}
 	queueMessage := NewMessageHandler(nil, mockActionSpecs, mockActionLoggers)
 
 	result, err := queueMessage.Handle(message)
@@ -127,7 +124,7 @@ func testProcessMappedActionNotFound(t *testing.T) {
 	runbook.ExecuteFunc = mockExecute
 
 	body := `{"actionType":"custom", "action":"Ack", "requestId": "RequestId"}`
-	message := sqs.Message{Body: &body}
+	message := JECMessage{Body: body}
 	messageHandler := NewMessageHandler(nil, mockActionSpecs, mockActionLoggers)
 
 	result, err := messageHandler.Handle(message)
@@ -147,7 +144,7 @@ func testProcessActionTypeNotMatched(t *testing.T) {
 	runbook.ExecuteFunc = mockExecute
 
 	body := `{"actionType":"http", "action":"Close", "requestId": "RequestId"}`
-	message := sqs.Message{Body: &body}
+	message := JECMessage{Body: body}
 	messageHandler := NewMessageHandler(nil, mockActionSpecs, mockActionLoggers)
 
 	result, err := messageHandler.Handle(message)
@@ -170,20 +167,20 @@ func testProcessFieldMissing(t *testing.T) {
 	runbook.ExecuteFunc = mockExecute
 
 	body := `{"alert":{}}`
-	message := sqs.Message{Body: &body}
+	message := JECMessage{Body: body}
 	messageHandler := NewMessageHandler(nil, mockActionSpecs, mockActionLoggers)
 
 	_, err := messageHandler.Handle(message)
-	expectedErr := errors.New("SQS message does not contain action property.")
+	expectedErr := errors.New("Message does not contain action property.")
 	assert.EqualError(t, err, expectedErr.Error())
 }
 
 // Mock Queue Message
 type MockMessageHandler struct {
-	HandleFunc func(message sqs.Message) (*runbook.ActionResultPayload, error)
+	HandleFunc func(message JECMessage) (*runbook.ActionResultPayload, error)
 }
 
-func (mqm *MockMessageHandler) Handle(message sqs.Message) (*runbook.ActionResultPayload, error) {
+func (mqm *MockMessageHandler) Handle(message JECMessage) (*runbook.ActionResultPayload, error) {
 	if mqm.HandleFunc != nil {
 		return mqm.HandleFunc(message)
 	}

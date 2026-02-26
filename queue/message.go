@@ -7,7 +7,6 @@ import (
 	"github.com/atlassian/jec/conf"
 	"github.com/atlassian/jec/git"
 	"github.com/atlassian/jec/runbook"
-	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"io"
@@ -15,7 +14,7 @@ import (
 )
 
 type MessageHandler interface {
-	Handle(message sqs.Message) (*runbook.ActionResultPayload, error)
+	Handle(message JECMessage) (*runbook.ActionResultPayload, error)
 }
 
 type messageHandler struct {
@@ -32,9 +31,9 @@ func NewMessageHandler(repositories git.Repositories, actionSpecs conf.ActionSpe
 	}
 }
 
-func (mh *messageHandler) Handle(message sqs.Message) (*runbook.ActionResultPayload, error) {
+func (mh *messageHandler) Handle(message JECMessage) (*runbook.ActionResultPayload, error) {
 	queuePayload := payload{}
-	err := json.Unmarshal([]byte(*message.Body), &queuePayload)
+	err := json.Unmarshal([]byte(message.Body), &queuePayload)
 	if err != nil {
 		return nil, err
 	}
@@ -45,7 +44,7 @@ func (mh *messageHandler) Handle(message sqs.Message) (*runbook.ActionResultPayl
 		action = queuePayload.Action
 	}
 	if action == "" {
-		return nil, errors.Errorf("SQS message does not contain action property.")
+		return nil, errors.Errorf("Message does not contain action property.")
 	}
 
 	result := &runbook.ActionResultPayload{
@@ -73,7 +72,7 @@ func (mh *messageHandler) Handle(message sqs.Message) (*runbook.ActionResultPayl
 	case *runbook.ExecError:
 		result.IsSuccessful = false
 		result.FailureMessage = fmt.Sprintf("Err: %s, Stderr: %s", err.Error(), err.Stderr)
-		logrus.Debugf("Action[%s] execution of message[%s] failed: %s Stderr: %s", action, *message.MessageId, err.Error(), err.Stderr)
+		logrus.Debugf("Action[%s] execution of message[%s] failed: %s Stderr: %s", action, message.MessageId, err.Error(), err.Stderr)
 	case nil:
 		result.IsSuccessful = true
 		if !queuePayload.DiscardScriptResponse && queuePayload.ActionType == HttpActionType {
@@ -82,13 +81,13 @@ func (mh *messageHandler) Handle(message sqs.Message) (*runbook.ActionResultPayl
 			if err != nil {
 				result.IsSuccessful = false
 				logrus.Debugf("Http Action[%s] execution of message[%s] failed, could not parse http response fields: %s, error: %s",
-					action, *message.MessageId, executionResult, err.Error())
+					action, message.MessageId, executionResult, err.Error())
 				result.FailureMessage = "Could not parse http response fields: " + executionResult
 			} else {
 				result.HttpResponse = httpResult
 			}
 		}
-		logrus.Debugf("Action[%s] execution of message[%s] has been completed and it took %f seconds.", action, *message.MessageId, took.Seconds())
+		logrus.Debugf("Action[%s] execution of message[%s] has been completed and it took %f seconds.", action, message.MessageId, took.Seconds())
 
 	default:
 		return nil, err
@@ -103,19 +102,19 @@ func (mh *messageHandler) resolveMappedAction(action string, actionType string) 
 	if !ok {
 		failureMessage := fmt.Sprintf("No mapped action is configured for requested action[%s]. "+
 			"The request will be ignored.", action)
-		return nil, errors.Errorf(failureMessage)
+		return nil, errors.New(failureMessage)
 	}
 
 	if mappedAction.Type != actionType {
 		failureMessage := fmt.Sprintf("The type[%s] of the mapped action[%s] is not compatible with requested type[%s]. "+
 			"The request will be ignored.", mappedAction.Type, action, actionType)
-		return nil, errors.Errorf(failureMessage)
+		return nil, errors.New(failureMessage)
 	}
 
 	return &mappedAction, nil
 }
 
-func (mh *messageHandler) execute(mappedAction *conf.MappedAction, message *sqs.Message) (string, string, error) {
+func (mh *messageHandler) execute(mappedAction *conf.MappedAction, message *JECMessage) (string, string, error) {
 
 	sourceType := mappedAction.SourceType
 	switch sourceType {
@@ -135,7 +134,7 @@ func (mh *messageHandler) execute(mappedAction *conf.MappedAction, message *sqs.
 
 	case conf.LocalSourceType:
 		args := append(mh.actionSpecs.GlobalFlags.Args(), mappedAction.Flags.Args()...)
-		args = append(args, []string{"-payload", *message.Body}...)
+		args = append(args, []string{"-payload", message.Body}...)
 		args = append(args, mh.actionSpecs.GlobalArgs...)
 		args = append(args, mappedAction.Args...)
 		env := append(mh.actionSpecs.GlobalEnv, mappedAction.Env...)
@@ -151,7 +150,7 @@ func (mh *messageHandler) execute(mappedAction *conf.MappedAction, message *sqs.
 		}
 		stderr := mh.actionLoggers[mappedAction.Stderr]
 
-		callbackContext, err := runbook.ExecuteFunc(*message.MessageId, mappedAction.Filepath, args, env, stdout, stderr)
+		callbackContext, err := runbook.ExecuteFunc(message.MessageId, mappedAction.Filepath, args, env, stdout, stderr)
 		return stdoutBuff.String(), callbackContext, err
 	default:
 		return "", "", errors.Errorf("Unknown action sourceType[%s].", sourceType)

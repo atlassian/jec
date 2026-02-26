@@ -1,7 +1,6 @@
 package queue
 
 import (
-	"bytes"
 	"encoding/json"
 	"github.com/atlassian/jec/conf"
 	"github.com/atlassian/jec/git"
@@ -13,7 +12,6 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"strconv"
 	"sync"
 	"time"
 )
@@ -21,17 +19,20 @@ import (
 var UserAgentHeader string
 
 const (
-	pollingWaitIntervalInMillis = 100
+	pollingWaitIntervalInMillis = 1000
 	visibilityTimeoutInSec      = 30
 	maxNumberOfMessages         = 10
-
-	successRefreshPeriod = time.Minute
-	errorRefreshPeriod   = time.Minute
 
 	repositoryRefreshPeriod = time.Minute
 )
 
-const tokenPath = "/jsm/ops/jec/v1/credentials"
+const authenticatePath = "/jsm/ops/jec/v1/authenticate"
+
+type authenticateResponse struct {
+	ChannelId string `json:"channelId"`
+	OwnerId   string `json:"ownerId"`
+	OwnerType string `json:"ownerType"`
+}
 
 var newPollerFunc = NewPoller
 
@@ -42,16 +43,13 @@ type Processor interface {
 
 type processor struct {
 	workerPool worker_pool.WorkerPool
-	pollers    map[string]Poller
+	poller     Poller
 
 	retryer *retryer.Retryer
 
 	configuration *conf.Configuration
 	repositories  git.Repositories
 	actionLoggers map[string]io.Writer
-
-	successRefreshPeriod time.Duration
-	errorRefreshPeriod   time.Duration
 
 	isRunning   bool
 	isRunningWg *sync.WaitGroup
@@ -77,18 +75,15 @@ func NewProcessor(conf *conf.Configuration) Processor {
 	}
 
 	return &processor{
-		successRefreshPeriod: successRefreshPeriod,
-		errorRefreshPeriod:   errorRefreshPeriod,
-		workerPool:           worker_pool.New(&conf.PoolConf),
-		configuration:        conf,
-		repositories:         git.NewRepositories(),
-		actionLoggers:        newActionLoggers(conf.ActionMappings),
-		pollers:              make(map[string]Poller),
-		quit:                 make(chan struct{}),
-		isRunning:            false,
-		isRunningWg:          &sync.WaitGroup{},
-		startStopMu:          &sync.Mutex{},
-		retryer:              &retryer.Retryer{},
+		workerPool:    worker_pool.New(&conf.PoolConf),
+		configuration: conf,
+		repositories:  git.NewRepositories(),
+		actionLoggers: newActionLoggers(conf.ActionMappings),
+		quit:          make(chan struct{}),
+		isRunning:     false,
+		isRunningWg:   &sync.WaitGroup{},
+		startStopMu:   &sync.Mutex{},
+		retryer:       &retryer.Retryer{},
 	}
 }
 
@@ -101,9 +96,10 @@ func (qp *processor) Start() error {
 	}
 
 	logrus.Infof("Queue processor is starting.")
-	token, err := qp.receiveToken()
+
+	authResp, err := qp.authenticate()
 	if err != nil {
-		logrus.Errorf("Queue processor could not get initial token and will terminate.")
+		logrus.Errorf("Queue processor could not authenticate and will terminate.")
 		return err
 	}
 
@@ -114,17 +110,30 @@ func (qp *processor) Start() error {
 	}
 
 	if qp.repositories.NotEmpty() {
-		qp.isRunningWg.Add(1) // one for pulling repositories
+		qp.isRunningWg.Add(1)
 		go qp.startPullingRepositories(repositoryRefreshPeriod)
 
 		conf.AddRepositoryPathToGitActionFilepaths(qp.configuration.ActionMappings, qp.repositories)
 	}
+
 	qp.workerPool.Start()
-	qp.refreshPollers(token)
-	qp.isRunningWg.Add(1) // one for receiving token
-	go qp.run()
+
+	messageHandler := &messageHandler{
+		repositories:  qp.repositories,
+		actionSpecs:   qp.configuration.ActionSpecifications,
+		actionLoggers: qp.actionLoggers,
+	}
+
+	qp.poller = newPollerFunc(
+		qp.workerPool,
+		messageHandler,
+		qp.configuration,
+		authResp.ChannelId,
+	)
+	qp.poller.Start()
 
 	qp.isRunning = true
+	logrus.Infof("Queue processor has started.")
 	return nil
 }
 
@@ -141,6 +150,10 @@ func (qp *processor) Stop() error {
 	close(qp.quit)
 	qp.isRunningWg.Wait()
 
+	if qp.poller != nil {
+		qp.poller.Stop()
+	}
+
 	qp.workerPool.Stop()
 	qp.repositories.RemoveAll()
 
@@ -149,27 +162,17 @@ func (qp *processor) Stop() error {
 	return nil
 }
 
-func (qp *processor) receiveToken() (*token, error) {
+func (qp *processor) authenticate() (*authenticateResponse, error) {
 
-	tokenUrl := qp.configuration.BaseUrl + tokenPath
+	url := qp.configuration.BaseUrl + authenticatePath
 
-	request, err := retryer.NewRequest(http.MethodGet, tokenUrl, nil)
+	request, err := retryer.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	request.Header.Add("Authorization", "GenieKey "+qp.configuration.ApiKey)
 	request.Header.Add("X-JEC-Client-Info", UserAgentHeader)
-
-	query := request.URL.Query()
-	for _, poller := range qp.pollers {
-		queueProperties := poller.QueueProvider().Properties()
-		query.Add(
-			queueProperties.Region(),
-			strconv.FormatInt(queueProperties.ExpireTimeMillis(), 10),
-		)
-	}
-	request.URL.RawQuery = query.Encode()
 
 	response, err := qp.retryer.Do(request)
 	if err != nil {
@@ -182,121 +185,19 @@ func (qp *processor) receiveToken() (*token, error) {
 		return nil, errors.Errorf("Token could not be received from Jira Service Management, status: %s, message: %s", response.Status, body)
 	}
 
-	responseToken := bytes.NewBufferString(response.Header.Get("Token"))
-
-	token := &token{}
-	err = json.NewDecoder(responseToken).Decode(&token)
+	body, err := io.ReadAll(response.Body)
 	if err != nil {
 		return nil, err
 	}
 
-	return token, nil
-}
-
-func (qp *processor) addPoller(queueProperties Properties, ownerId string) (Poller, error) {
-
-	queueProvider, err := NewSqsProvider(queueProperties)
+	authResp := &authenticateResponse{}
+	err = json.Unmarshal(body, authResp)
 	if err != nil {
 		return nil, err
 	}
 
-	messageHandler := &messageHandler{
-		repositories:  qp.repositories,
-		actionSpecs:   qp.configuration.ActionSpecifications,
-		actionLoggers: qp.actionLoggers,
-	}
-
-	poller := newPollerFunc(
-		qp.workerPool,
-		queueProvider,
-		messageHandler,
-		qp.configuration,
-		ownerId,
-	)
-	qp.pollers[queueProvider.Properties().Url()] = poller
-	return poller, nil
-}
-
-func (qp *processor) removePoller(queueUrl string) Poller {
-	poller := qp.pollers[queueUrl]
-	delete(qp.pollers, queueUrl)
-	return poller
-}
-
-func (qp *processor) refreshPollers(token *token) {
-	pollerKeys := make(map[string]struct{}, len(qp.pollers))
-	for key := range qp.pollers {
-		pollerKeys[key] = struct{}{}
-	}
-
-	for _, queueProperties := range token.QueuePropertiesList {
-		queueUrl := queueProperties.Url()
-
-		// refresh existing pollers if there comes new AssumeRoleResult
-		if poller, contains := qp.pollers[queueUrl]; contains {
-			isTokenRefreshed := queueProperties.AssumeRoleResult != AssumeRoleResult{}
-			if isTokenRefreshed {
-				err := poller.RefreshClient(queueProperties.AssumeRoleResult)
-				if err != nil {
-					logrus.Errorf("Client of queue provider[%s] could not be refreshed.", queueUrl)
-				}
-				logrus.Infof("Client of queue provider[%s] has refreshed.", queueUrl)
-			}
-			delete(pollerKeys, queueUrl)
-
-			// add new pollers
-		} else {
-			poller, err := qp.addPoller(queueProperties, token.OwnerId)
-			if err != nil {
-				logrus.Errorf("Poller[%s] could not be added: %s.", queueUrl, err)
-				continue
-			}
-			poller.Start()
-			logrus.Debugf("Poller[%s] is added.", queueUrl)
-		}
-	}
-
-	// remove unnecessary pollers
-	for queueUrl := range pollerKeys {
-		qp.removePoller(queueUrl).Stop()
-		logrus.Debugf("Poller[%s] is removed.", queueUrl)
-	}
-
-	if len(token.QueuePropertiesList) != 0 { // pick first Properties to refresh waitPeriods, can be change for further usage
-		qp.successRefreshPeriod = time.Second * time.Duration(token.QueuePropertiesList[0].Configuration.SuccessRefreshPeriodInSeconds)
-		qp.errorRefreshPeriod = time.Second * time.Duration(token.QueuePropertiesList[0].Configuration.ErrorRefreshPeriodInSeconds)
-	}
-}
-
-func (qp *processor) run() {
-
-	logrus.Infof("Queue processor has started to run. Refresh client period: %s.", qp.successRefreshPeriod.String())
-
-	ticker := time.NewTicker(qp.successRefreshPeriod)
-
-	for {
-		select {
-		case <-qp.quit:
-			ticker.Stop()
-			for _, poller := range qp.pollers {
-				poller.Stop()
-			}
-			qp.isRunningWg.Done()
-			return
-		case <-ticker.C:
-			ticker.Stop()
-			token, err := qp.receiveToken()
-			if err != nil {
-				logrus.Warnf("Refresh cycle of queue processor has failed: %s", err)
-				logrus.Debugf("Will refresh token after %s", qp.errorRefreshPeriod.String())
-				ticker = time.NewTicker(qp.errorRefreshPeriod)
-				break
-			}
-			qp.refreshPollers(token)
-
-			ticker = time.NewTicker(qp.successRefreshPeriod)
-		}
-	}
+	logrus.Infof("Successfully authenticated. ChannelId: %s, OwnerId: %s, OwnerType: %s", authResp.ChannelId, authResp.OwnerId, authResp.OwnerType)
+	return authResp, nil
 }
 
 func (qp *processor) startPullingRepositories(pullPeriod time.Duration) {

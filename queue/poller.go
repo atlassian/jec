@@ -1,13 +1,17 @@
 package queue
 
 import (
+	"encoding/json"
+	"fmt"
 	"github.com/atlassian/jec/conf"
+	"github.com/atlassian/jec/retryer"
 	"github.com/atlassian/jec/util"
 	"github.com/atlassian/jec/worker_pool"
-	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"gopkg.in/natefinch/lumberjack.v2"
+	"io/ioutil"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -15,18 +19,19 @@ import (
 	"time"
 )
 
+const messagesPath = "/jsm/ops/jec/v1/messages/channels/"
+
 type Poller interface {
 	Processor
-	RefreshClient(assumeRoleResult AssumeRoleResult) error
-	QueueProvider() SQSProvider
+	ChannelId() string
 }
 
 type poller struct {
 	workerPool     worker_pool.WorkerPool
-	queueProvider  SQSProvider
 	messageHandler MessageHandler
+	retryer        *retryer.Retryer
 
-	ownerId            string
+	channelId          string
 	conf               *conf.Configuration
 	queueMessageLogrus *logrus.Logger
 
@@ -38,18 +43,17 @@ type poller struct {
 }
 
 func NewPoller(workerPool worker_pool.WorkerPool,
-	queueProvider SQSProvider,
 	messageHandler MessageHandler,
 	conf *conf.Configuration,
-	ownerId string) Poller {
+	channelId string) Poller {
 
 	return &poller{
 		workerPool:         workerPool,
-		queueProvider:      queueProvider,
 		messageHandler:     messageHandler,
-		ownerId:            ownerId,
+		retryer:            &retryer.Retryer{},
+		channelId:          channelId,
 		conf:               conf,
-		queueMessageLogrus: newQueueMessageLogrus(queueProvider.Properties().Region()),
+		queueMessageLogrus: newQueueMessageLogrus(channelId),
 		isRunning:          false,
 		isRunningWg:        &sync.WaitGroup{},
 		startStopMu:        &sync.Mutex{},
@@ -58,12 +62,8 @@ func NewPoller(workerPool worker_pool.WorkerPool,
 	}
 }
 
-func (p *poller) QueueProvider() SQSProvider {
-	return p.queueProvider
-}
-
-func (p *poller) RefreshClient(assumeRoleResult AssumeRoleResult) error {
-	return p.queueProvider.RefreshClient(assumeRoleResult)
+func (p *poller) ChannelId() string {
+	return p.channelId
 }
 
 func (p *poller) Start() error {
@@ -99,21 +99,46 @@ func (p *poller) Stop() error {
 	return nil
 }
 
-func (p *poller) terminateMessageVisibility(messages []*sqs.Message) {
+func (p *poller) fetchMessages(maxNumberOfMessages int64) ([]*JECMessage, error) {
 
-	region := p.queueProvider.Properties().Region()
+	url := fmt.Sprintf("%s%s%s", p.conf.BaseUrl, messagesPath, p.channelId)
 
-	for i := 0; i < len(messages); i++ {
-		messageId := *messages[i].MessageId
-
-		err := p.queueProvider.ChangeMessageVisibility(messages[i], 0)
-		if err != nil {
-			logrus.Warnf("Poller[%s] could not terminate visibility of message[%s]: %s.", region, messageId, err.Error())
-			continue
-		}
-
-		logrus.Debugf("Poller[%s] terminated visibility of message[%s].", region, messageId)
+	request, err := retryer.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
 	}
+
+	request.Header.Add("Authorization", "GenieKey "+p.conf.ApiKey)
+	request.Header.Add("X-JEC-Client-Info", UserAgentHeader)
+
+	response, err := p.retryer.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		body, _ := ioutil.ReadAll(response.Body)
+		return nil, errors.Errorf("Failed to fetch messages from channel[%s], status: %s, message: %s", p.channelId, response.Status, body)
+	}
+
+	body, err := ioutil.ReadAll(response.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var messages []*JECMessage
+	err = json.Unmarshal(body, &messages)
+	if err != nil {
+		return nil, err
+	}
+
+	// Limit to maxNumberOfMessages
+	if int64(len(messages)) > maxNumberOfMessages {
+		messages = messages[:maxNumberOfMessages]
+	}
+
+	return messages, nil
 }
 
 func (p *poller) poll() (shouldWait bool) {
@@ -123,45 +148,41 @@ func (p *poller) poll() (shouldWait bool) {
 		return true
 	}
 
-	region := p.queueProvider.Properties().Region()
 	maxNumberOfMessages := util.Min(p.conf.PollerConf.MaxNumberOfMessages, int64(availableWorkerCount))
 
-	messages, err := p.queueProvider.ReceiveMessage(maxNumberOfMessages, p.conf.PollerConf.VisibilityTimeoutInSeconds)
-	if err != nil { // todo check wait time according to error / check error
-		logrus.Errorf("Poller[%s] could not receive message: %s", region, err.Error())
+	messages, err := p.fetchMessages(maxNumberOfMessages)
+	if err != nil {
+		logrus.Errorf("Poller[%s] could not fetch messages: %s", p.channelId, err.Error())
 		return true
 	}
 
 	messageLength := len(messages)
 	if messageLength == 0 {
-		logrus.Tracef("There is no new message in the queue[%s].", region)
+		logrus.Tracef("There is no new message in channel[%s].", p.channelId)
 		return true
 	}
 
-	logrus.Debugf("Received %d messages from the queue[%s].", messageLength, region)
+	logrus.Debugf("Received %d messages from channel[%s].", messageLength, p.channelId)
 
 	for i := 0; i < messageLength; i++ {
 
 		p.queueMessageLogrus.
-			WithField("messageId", *messages[i].MessageId).
-			Info("Message body: ", *messages[i].Body)
+			WithField("messageId", messages[i].MessageId).
+			Info("Message body: ", messages[i].Body)
 
 		job := newJob(
-			p.queueProvider,
 			p.messageHandler,
 			*messages[i],
 			p.conf.ApiKey,
 			p.conf.BaseUrl,
-			p.ownerId,
 		)
 
 		isSubmitted, err := p.workerPool.Submit(job)
 		if err != nil {
-			logrus.Debugf("Error occurred while submitting, messages will be terminated: %s.", err.Error())
-			p.terminateMessageVisibility(messages[i:])
+			logrus.Debugf("Error occurred while submitting: %s.", err.Error())
 			return true
 		} else if !isSubmitted {
-			p.terminateMessageVisibility(messages[i : i+1])
+			logrus.Debugf("Job[%s] could not be submitted.", messages[i].MessageId)
 		}
 	}
 	return false
@@ -169,8 +190,7 @@ func (p *poller) poll() (shouldWait bool) {
 
 func (p *poller) wait(pollingWaitInterval time.Duration) {
 
-	queueUrl := p.queueProvider.Properties().Url()
-	logrus.Tracef("Poller[%s] will wait %s before next polling", queueUrl, pollingWaitInterval.String())
+	logrus.Tracef("Poller[%s] will wait %s before next polling", p.channelId, pollingWaitInterval.String())
 
 	ticker := time.NewTicker(pollingWaitInterval)
 	defer ticker.Stop()
@@ -178,7 +198,7 @@ func (p *poller) wait(pollingWaitInterval time.Duration) {
 	for {
 		select {
 		case <-p.wakeUp:
-			logrus.Debugf("Poller[%s] has been interrupted while waiting for next polling.", queueUrl)
+			logrus.Debugf("Poller[%s] has been interrupted while waiting for next polling.", p.channelId)
 			return
 		case <-ticker.C:
 			return
@@ -188,32 +208,26 @@ func (p *poller) wait(pollingWaitInterval time.Duration) {
 
 func (p *poller) run() {
 
-	queueUrl := p.queueProvider.Properties().Url()
-	logrus.Infof("Poller[%s] has started to run.", queueUrl)
+	logrus.Infof("Poller[%s] has started to run.", p.channelId)
 
 	pollingWaitInterval := p.conf.PollerConf.PollingWaitIntervalInMillis * time.Millisecond
-	expiredTokenWaitInterval := errorRefreshPeriod
 
 	for {
 		select {
 		case <-p.quit:
-			logrus.Infof("Poller[%s] has stopped to poll.", queueUrl)
+			logrus.Infof("Poller[%s] has stopped to poll.", p.channelId)
 			p.isRunningWg.Done()
 			return
 		default:
-			if p.queueProvider.IsTokenExpired() {
-				region := p.queueProvider.Properties().Region()
-				logrus.Warnf("Security token is expired, poller[%s] skips to receive message.", region)
-				p.wait(expiredTokenWaitInterval)
-			} else if shouldWait := p.poll(); shouldWait {
+			if shouldWait := p.poll(); shouldWait {
 				p.wait(pollingWaitInterval)
 			}
 		}
 	}
 }
 
-func newQueueMessageLogrus(region string) *logrus.Logger {
-	logFilePath := filepath.Join("/var", "log", "jec", "jecQueueMessages-"+region+"-"+strconv.Itoa(os.Getpid())+".log")
+func newQueueMessageLogrus(channelId string) *logrus.Logger {
+	logFilePath := filepath.Join("/var", "log", "jec", "jecQueueMessages-"+channelId+"-"+strconv.Itoa(os.Getpid())+".log")
 	queueMessageLogger := &lumberjack.Logger{
 		Filename:  logFilePath,
 		MaxSize:   3,  // MB
