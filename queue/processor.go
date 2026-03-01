@@ -20,7 +20,6 @@ var UserAgentHeader string
 
 const (
 	pollingWaitIntervalInMillis = 1000
-	visibilityTimeoutInSec      = 30
 	maxNumberOfMessages         = 10
 
 	repositoryRefreshPeriod = time.Minute
@@ -64,14 +63,9 @@ func NewProcessor(conf *conf.Configuration) Processor {
 		conf.PollerConf.MaxNumberOfMessages = maxNumberOfMessages
 	}
 
-	if conf.PollerConf.PollingWaitIntervalInMillis <= 0 {
-		logrus.Infof("Polling wait interval should be greater than 0, default value[%d ms.] is set.", pollingWaitIntervalInMillis)
+	if conf.PollerConf.PollingWaitIntervalInMillis <= 1000 {
+		logrus.Infof("Polling wait interval should be equal or greater than 1000ms, default value[%d ms.] is set.", pollingWaitIntervalInMillis)
 		conf.PollerConf.PollingWaitIntervalInMillis = pollingWaitIntervalInMillis
-	}
-
-	if conf.PollerConf.VisibilityTimeoutInSeconds < 15 {
-		logrus.Infof("Visibility timeout cannot be lesser than 15 seconds or greater than 12 hours, default value[%d s.] is set.", visibilityTimeoutInSec)
-		conf.PollerConf.VisibilityTimeoutInSeconds = visibilityTimeoutInSec
 	}
 
 	return &processor{

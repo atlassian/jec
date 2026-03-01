@@ -19,11 +19,11 @@ var mockActionResultPayload = &runbook.ActionResultPayload{
 
 func newJobTest() *job {
 	mockMessageHandler := &MockMessageHandler{}
-	mockMessageHandler.HandleFunc = func(message JECMessage) (payload *runbook.ActionResultPayload, e error) {
+	mockMessageHandler.HandleFunc = func(message Message) (payload *runbook.ActionResultPayload, e error) {
 		return mockActionResultPayload, nil
 	}
 
-	message := JECMessage{
+	message := Message{
 		MessageId: mockMessageId,
 		Body:      "mockBody",
 		ChannelId: mockChannelId,
@@ -138,7 +138,7 @@ func TestExecuteWithProcessError(t *testing.T) {
 	jecJob := newJobTest()
 	jecJob.baseUrl = testServer.URL
 
-	jecJob.messageHandler.(*MockMessageHandler).HandleFunc = func(message JECMessage) (payload *runbook.ActionResultPayload, e error) {
+	jecJob.messageHandler.(*MockMessageHandler).HandleFunc = func(message Message) (payload *runbook.ActionResultPayload, e error) {
 		return errPayload, errors.New("Process Error")
 	}
 
