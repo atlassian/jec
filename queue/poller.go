@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-const messagesPath = "/jsm/ops/jec/v1/messages/channels/"
+const messagesPath = "/jsm/ops/jec/v2/messages/channel/"
 
 type Poller interface {
 	Processor
