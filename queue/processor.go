@@ -25,7 +25,7 @@ const (
 	repositoryRefreshPeriod = time.Minute
 )
 
-const authenticatePath = "/jsm/ops/jec/v1/authenticate"
+const authenticatePath = "/jsm/ops/jec/v2/authenticate"
 
 type authenticateResponse struct {
 	ChannelId string `json:"channelId"`
