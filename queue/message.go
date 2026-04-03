@@ -15,9 +15,10 @@ import (
 
 // Message represents a message fetched from the JEC Platform API.
 type Message struct {
-	MessageId string `json:"messageId"`
-	Body      string `json:"body"`
-	ChannelId string `json:"channelId"`
+	MessageId     string `json:"messageId"`
+	Body          string `json:"body"`
+	ChannelId     string `json:"channelId"`
+	MessageHandle string `json:"messageHandle"`
 }
 
 type MessageHandler interface {

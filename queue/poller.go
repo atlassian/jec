@@ -3,13 +3,6 @@ package queue
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/atlassian/jec/conf"
-	"github.com/atlassian/jec/retryer"
-	"github.com/atlassian/jec/util"
-	"github.com/atlassian/jec/worker_pool"
-	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
-	"gopkg.in/natefinch/lumberjack.v2"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -17,6 +10,14 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/atlassian/jec/conf"
+	"github.com/atlassian/jec/retryer"
+	"github.com/atlassian/jec/util"
+	"github.com/atlassian/jec/worker_pool"
+	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 const messagesPath = "/jsm/ops/jec/v2/messages/channel/"
@@ -34,6 +35,7 @@ type poller struct {
 	channelId          string
 	conf               *conf.Configuration
 	queueMessageLogrus *logrus.Logger
+	registrator        *messageRegistrator
 
 	isRunning   bool
 	isRunningWg *sync.WaitGroup
@@ -54,6 +56,7 @@ func NewPoller(workerPool worker_pool.WorkerPool,
 		channelId:          channelId,
 		conf:               conf,
 		queueMessageLogrus: newQueueMessageLogrus(channelId),
+		registrator:        newMessageRegistrator(),
 		isRunning:          false,
 		isRunningWg:        &sync.WaitGroup{},
 		startStopMu:        &sync.Mutex{},
@@ -99,7 +102,7 @@ func (p *poller) Stop() error {
 	return nil
 }
 
-func (p *poller) fetchMessages(maxNumberOfMessages int64) ([]*Message, error) {
+func (p *poller) fetchMessages() ([]*Message, error) {
 
 	url := fmt.Sprintf("%s%s%s", p.conf.BaseUrl, messagesPath, p.channelId)
 
@@ -133,11 +136,6 @@ func (p *poller) fetchMessages(maxNumberOfMessages int64) ([]*Message, error) {
 		return nil, err
 	}
 
-	// Limit to maxNumberOfMessages
-	if int64(len(messages)) > maxNumberOfMessages {
-		messages = messages[:maxNumberOfMessages]
-	}
-
 	return messages, nil
 }
 
@@ -148,9 +146,7 @@ func (p *poller) poll() (shouldWait bool) {
 		return true
 	}
 
-	maxNumberOfMessages := util.Min(p.conf.PollerConf.MaxNumberOfMessages, int64(availableWorkerCount))
-
-	messages, err := p.fetchMessages(maxNumberOfMessages)
+	messages, err := p.fetchMessages()
 	if err != nil {
 		logrus.Errorf("Poller[%s] could not fetch messages: %s", p.channelId, err.Error())
 		return true
@@ -164,7 +160,18 @@ func (p *poller) poll() (shouldWait bool) {
 
 	logrus.Debugf("Received %d messages from channel[%s].", messageLength, p.channelId)
 
+	// Add all fetched messages to registrator
 	for i := 0; i < messageLength; i++ {
+		p.registrator.Add(messages[i].MessageId, messages[i].MessageHandle)
+	}
+
+	// Submit messages (with dedup and tracking)
+	for i := 0; i < messageLength; i++ {
+		// Skip if already processed (dedup)
+		if p.registrator.IsProcessed(messages[i].MessageId) {
+			logrus.Debugf("Message[%s] already processed, skipping.", messages[i].MessageId)
+			continue
+		}
 
 		p.queueMessageLogrus.
 			WithField("messageId", messages[i].MessageId).
@@ -183,8 +190,22 @@ func (p *poller) poll() (shouldWait bool) {
 			return true
 		} else if !isSubmitted {
 			logrus.Debugf("Job[%s] could not be submitted.", messages[i].MessageId)
+		} else {
+			// Mark as processed only if successfully submitted
+			p.registrator.MarkProcessed(messages[i].MessageId)
 		}
 	}
+
+	// Check if all messages are processed
+	if p.registrator.AllProcessed() {
+		err := deleteMessages(p.conf.BaseUrl, p.conf.ApiKey, p.channelId, p.retryer, p.registrator.ProcessedEntries())
+		if err != nil {
+			logrus.Errorf("Failed to delete messages from channel[%s]: %s", p.channelId, err.Error())
+		} else {
+			p.registrator.Reset()
+		}
+	}
+
 	return false
 }
 

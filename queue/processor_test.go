@@ -210,7 +210,7 @@ func (m *MockWorkerPool) NumberOfAvailableWorker() int32 {
 	if m.NumberOfAvailableWorkerFunc != nil {
 		return m.NumberOfAvailableWorkerFunc()
 	}
-	return 0
+	return 1
 }
 
 func (m *MockWorkerPool) Start() error {
