@@ -1,9 +1,6 @@
 package worker_pool
 
 import (
-	"github.com/atlassian/jec/conf"
-	"github.com/sirupsen/logrus"
-	"github.com/stretchr/testify/assert"
 	"io/ioutil"
 	"math/cmplx"
 	"os"
@@ -11,6 +8,10 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/atlassian/jec/conf"
+	"github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/assert"
 )
 
 var testPoolConf = &conf.PoolConf{
@@ -48,7 +49,7 @@ func TestValidateNewWorkerPool(t *testing.T) {
 
 	assert.Equal(t, int32(minNumberOfWorker), pool.poolConf.MinNumberOfWorker)
 	assert.Equal(t, int32(maxNumberOfWorker), pool.poolConf.MaxNumberOfWorker)
-	assert.Equal(t, int(queueSize), cap(pool.jobQueue))
+	assert.Equal(t, int32(queueSize), cap(pool.jobQueue))
 	assert.Equal(t, time.Duration(keepAliveTimeInMillis), pool.poolConf.KeepAliveTimeInMillis)
 	assert.Equal(t, time.Duration(monitoringPeriodInMillis), pool.poolConf.MonitoringPeriodInMillis)
 }
@@ -64,7 +65,7 @@ func TestValidateWorkerNumbersNewWorkerPool(t *testing.T) {
 
 	assert.Equal(t, int32(1), pool.poolConf.MinNumberOfWorker)
 	assert.Equal(t, int32(1), pool.poolConf.MaxNumberOfWorker)
-	assert.Equal(t, int(queueSize), cap(pool.jobQueue))
+	assert.Equal(t, int32(queueSize), cap(pool.jobQueue))
 	assert.Equal(t, time.Duration(keepAliveTimeInMillis), pool.poolConf.KeepAliveTimeInMillis)
 	assert.Equal(t, time.Duration(monitoringPeriodInMillis), pool.poolConf.MonitoringPeriodInMillis)
 }

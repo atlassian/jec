@@ -35,7 +35,7 @@ type poller struct {
 	channelId          string
 	conf               *conf.Configuration
 	queueMessageLogrus *logrus.Logger
-	registrator        *messageRegistrator
+	tracker            *messageTracker
 
 	isRunning   bool
 	isRunningWg *sync.WaitGroup
@@ -56,7 +56,7 @@ func NewPoller(workerPool worker_pool.WorkerPool,
 		channelId:          channelId,
 		conf:               conf,
 		queueMessageLogrus: newQueueMessageLogrus(channelId),
-		registrator:        newMessageRegistrator(),
+		tracker:            newMessageTracker(),
 		isRunning:          false,
 		isRunningWg:        &sync.WaitGroup{},
 		startStopMu:        &sync.Mutex{},
@@ -160,15 +160,12 @@ func (p *poller) poll() (shouldWait bool) {
 
 	logrus.Debugf("Received %d messages from channel[%s].", messageLength, p.channelId)
 
-	// Add all fetched messages to registrator
-	for i := 0; i < messageLength; i++ {
-		p.registrator.Add(messages[i].MessageId, messages[i].MessageHandle)
-	}
-
 	// Submit messages (with dedup and tracking)
 	for i := 0; i < messageLength; i++ {
+		p.tracker.putIfAbsent(messages[i].MessageId, messages[i].MessageHandle)
+
 		// Skip if already processed (dedup)
-		if p.registrator.IsProcessed(messages[i].MessageId) {
+		if p.tracker.IsProcessed(messages[i].MessageId) {
 			logrus.Debugf("Message[%s] already processed, skipping.", messages[i].MessageId)
 			continue
 		}
@@ -192,17 +189,17 @@ func (p *poller) poll() (shouldWait bool) {
 			logrus.Debugf("Job[%s] could not be submitted.", messages[i].MessageId)
 		} else {
 			// Mark as processed only if successfully submitted
-			p.registrator.MarkProcessed(messages[i].MessageId)
+			p.tracker.MarkProcessed(messages[i].MessageId)
 		}
 	}
 
 	// Check if all messages are processed
-	if p.registrator.AllProcessed() {
-		err := deleteMessages(p.conf.BaseUrl, p.conf.ApiKey, p.channelId, p.retryer, p.registrator.ProcessedEntries())
+	if p.tracker.AllProcessed() {
+		err := deleteMessages(p.conf.BaseUrl, p.conf.ApiKey, p.channelId, p.retryer, p.tracker.ProcessedEntries())
 		if err != nil {
 			logrus.Errorf("Failed to delete messages from channel[%s]: %s", p.channelId, err.Error())
 		} else {
-			p.registrator.Reset()
+			p.tracker.Reset()
 		}
 	}
 

@@ -20,7 +20,6 @@ var UserAgentHeader string
 
 const (
 	pollingWaitIntervalInMillis = 1000
-	maxNumberOfMessages         = 10
 
 	repositoryRefreshPeriod = time.Minute
 )
@@ -57,11 +56,6 @@ type processor struct {
 }
 
 func NewProcessor(conf *conf.Configuration) Processor {
-
-	if conf.PollerConf.MaxNumberOfMessages <= 0 {
-		logrus.Infof("Max number of messages should be greater than 0, default value[%d] is set.", maxNumberOfMessages)
-		conf.PollerConf.MaxNumberOfMessages = maxNumberOfMessages
-	}
 
 	if conf.PollerConf.PollingWaitIntervalInMillis <= 1000 {
 		logrus.Infof("Polling wait interval should be equal or greater than 1000ms, default value[%d ms.] is set.", pollingWaitIntervalInMillis)

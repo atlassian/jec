@@ -3,22 +3,22 @@ package queue
 import (
 	"bytes"
 	"encoding/json"
+	"io/ioutil"
+	"net/http"
+	"strconv"
+	"sync"
+	"testing"
+
 	"github.com/atlassian/jec/conf"
 	"github.com/atlassian/jec/retryer"
 	"github.com/atlassian/jec/worker_pool"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
-	"io/ioutil"
-	"net/http"
-	"strconv"
-	"sync"
-	"testing"
 )
 
 var mockPollerConf = &conf.PollerConf{
 	PollingWaitIntervalInMillis: pollingWaitIntervalInMillis,
-	MaxNumberOfMessages:         maxNumberOfMessages,
 }
 
 func newPollerTest() *poller {
@@ -39,7 +39,7 @@ func newPollerTest() *poller {
 		messageHandler:     NewMockMessageHandler(),
 		retryer:            &retryer.Retryer{},
 		queueMessageLogrus: &logrus.Logger{},
-		registrator:        newMessageRegistrator(),
+		tracker:            newMessageTracker(),
 	}
 }
 
@@ -101,6 +101,9 @@ func TestPollWithReceiveError(t *testing.T) {
 
 	poller := newPollerTest()
 
+	poller.workerPool.(*MockWorkerPool).NumberOfAvailableWorkerFunc = func() int32 {
+		return 1
+	}
 	poller.retryer.DoFunc = mockFetchMessages(nil, errors.New(""))
 
 	shouldWait := poller.poll()
@@ -111,6 +114,9 @@ func TestPollZeroMessage(t *testing.T) {
 
 	poller := newPollerTest()
 
+	poller.workerPool.(*MockWorkerPool).NumberOfAvailableWorkerFunc = func() int32 {
+		return 1
+	}
 	poller.retryer.DoFunc = mockFetchMessages([]*Message{}, nil)
 
 	logrus.SetLevel(logrus.DebugLevel)
@@ -123,6 +129,10 @@ func TestPollMaxMessage(t *testing.T) {
 	poller := newPollerTest()
 
 	expected := int64(4)
+
+	poller.workerPool.(*MockWorkerPool).NumberOfAvailableWorkerFunc = func() int32 {
+		return int32(expected)
+	}
 
 	messages := make([]*Message, expected)
 	for i := int64(0); i < expected; i++ {
@@ -166,6 +176,12 @@ func TestPollMaxMessage(t *testing.T) {
 func TestPollFetchAllMessages(t *testing.T) {
 
 	poller := newPollerTest()
+
+	availableWorkerCount := int64(12)
+
+	poller.workerPool.(*MockWorkerPool).NumberOfAvailableWorkerFunc = func() int32 {
+		return int32(availableWorkerCount)
+	}
 
 	// API returns more messages - poller should fetch all (no capping)
 	messageCount := 20
@@ -214,6 +230,10 @@ func TestPollMessageSubmitFail(t *testing.T) {
 
 	expected := int64(4)
 
+	poller.workerPool.(*MockWorkerPool).NumberOfAvailableWorkerFunc = func() int32 {
+		return int32(expected)
+	}
+
 	messages := make([]*Message, expected)
 	for i := int64(0); i < expected; i++ {
 		messages[i] = &Message{
@@ -243,6 +263,10 @@ func TestPollMessageSubmitError(t *testing.T) {
 
 	expected := int64(5)
 
+	poller.workerPool.(*MockWorkerPool).NumberOfAvailableWorkerFunc = func() int32 {
+		return int32(expected)
+	}
+
 	messages := make([]*Message, expected)
 	for i := int64(0); i < expected; i++ {
 		messages[i] = &Message{
@@ -269,6 +293,10 @@ func TestPollMessageSubmitError(t *testing.T) {
 func TestPollMessageSubmitSuccess(t *testing.T) {
 
 	poller := newPollerTest()
+
+	poller.workerPool.(*MockWorkerPool).NumberOfAvailableWorkerFunc = func() int32 {
+		return 5
+	}
 
 	messages := make([]*Message, 5)
 	for i := 0; i < 5; i++ {
@@ -311,9 +339,9 @@ func TestPollWithDedup(t *testing.T) {
 
 	poller := newPollerTest()
 
-	// Pre-populate registrator with one already-processed message
-	poller.registrator.Add("0", "handle-0")
-	poller.registrator.MarkProcessed("0")
+	// Pre-populate tracker with one already-processed message
+	poller.tracker.putIfAbsent("0", "handle-0")
+	poller.tracker.MarkProcessed("0")
 
 	// Fetch 3 messages, where message 0 is already processed
 	messages := make([]*Message, 3)
@@ -341,6 +369,10 @@ func TestPollWithDedup(t *testing.T) {
 			StatusCode: http.StatusOK,
 			Body:       ioutil.NopCloser(bytes.NewReader(body)),
 		}, nil
+	}
+
+	poller.workerPool.(*MockWorkerPool).NumberOfAvailableWorkerFunc = func() int32 {
+		return 1
 	}
 
 	submitCount := 0
@@ -374,8 +406,8 @@ func TestPollAllSubmittedDeleteSuccess(t *testing.T) {
 	poller.retryer.DoFunc = func(r *retryer.Retryer, request *retryer.Request) (*http.Response, error) {
 		if request.Method == http.MethodDelete {
 			deleteCallCount++
-			// Verify the registrator has messages before delete
-			assert.Equal(t, 3, len(poller.registrator.messages))
+			// Verify the tracker has messages before delete
+			assert.Equal(t, 3, len(poller.tracker.messages))
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Body:       ioutil.NopCloser(bytes.NewReader([]byte(""))),
@@ -389,6 +421,10 @@ func TestPollAllSubmittedDeleteSuccess(t *testing.T) {
 		}, nil
 	}
 
+	poller.workerPool.(*MockWorkerPool).NumberOfAvailableWorkerFunc = func() int32 {
+		return 1
+	}
+
 	submitCount := 0
 	poller.workerPool.(*MockWorkerPool).SubmitFunc = func(job worker_pool.Job) (bool, error) {
 		submitCount++
@@ -400,7 +436,7 @@ func TestPollAllSubmittedDeleteSuccess(t *testing.T) {
 	assert.False(t, shouldWait)
 	assert.Equal(t, 3, submitCount)
 	assert.Equal(t, 1, deleteCallCount)
-	assert.Equal(t, 0, len(poller.registrator.messages)) // Registrator should be reset
+	assert.Equal(t, 0, len(poller.tracker.messages)) // Registrator should be reset
 }
 
 func TestPollAllSubmittedDeleteFailure(t *testing.T) {
@@ -434,6 +470,10 @@ func TestPollAllSubmittedDeleteFailure(t *testing.T) {
 		}, nil
 	}
 
+	poller.workerPool.(*MockWorkerPool).NumberOfAvailableWorkerFunc = func() int32 {
+		return 1
+	}
+
 	poller.workerPool.(*MockWorkerPool).SubmitFunc = func(job worker_pool.Job) (bool, error) {
 		return true, nil
 	}
@@ -442,7 +482,7 @@ func TestPollAllSubmittedDeleteFailure(t *testing.T) {
 
 	assert.False(t, shouldWait)
 	assert.Equal(t, 1, deleteCallCount)
-	assert.Equal(t, 2, len(poller.registrator.messages)) // Registrator should NOT be reset on delete failure
+	assert.Equal(t, 2, len(poller.tracker.messages)) // Registrator should NOT be reset on delete failure
 }
 
 func TestPollPartialSubmitNoDelete(t *testing.T) {
@@ -460,6 +500,10 @@ func TestPollPartialSubmitNoDelete(t *testing.T) {
 	}
 	poller.retryer.DoFunc = mockFetchMessages(messages, nil)
 
+	poller.workerPool.(*MockWorkerPool).NumberOfAvailableWorkerFunc = func() int32 {
+		return 1
+	}
+
 	submitCount := 0
 	poller.workerPool.(*MockWorkerPool).SubmitFunc = func(job worker_pool.Job) (bool, error) {
 		submitCount++
@@ -474,11 +518,11 @@ func TestPollPartialSubmitNoDelete(t *testing.T) {
 
 	assert.False(t, shouldWait)
 	assert.Equal(t, 3, submitCount)
-	// Not all submitted, delete should not be called (registrator should still have messages)
-	assert.Equal(t, 3, len(poller.registrator.messages)) // All 3 are tracked, but only 2 are processed
+	// Not all submitted, delete should not be called (tracker should still have messages)
+	assert.Equal(t, 3, len(poller.tracker.messages)) // All 3 are tracked, but only 2 are processed
 	// Verify that only 2 are marked as processed
 	processedCount := 0
-	for _, msg := range poller.registrator.messages {
+	for _, msg := range poller.tracker.messages {
 		if msg.processed {
 			processedCount++
 		}

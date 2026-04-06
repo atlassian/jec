@@ -3,17 +3,18 @@ package queue
 import (
 	"bytes"
 	"encoding/json"
+	"io/ioutil"
+	"net/http"
+	"sync"
+	"testing"
+	"time"
+
 	"github.com/atlassian/jec/conf"
 	"github.com/atlassian/jec/git"
 	"github.com/atlassian/jec/retryer"
 	"github.com/atlassian/jec/worker_pool"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
-	"io/ioutil"
-	"net/http"
-	"sync"
-	"testing"
-	"time"
 )
 
 var mockConf = &conf.Configuration{
@@ -61,7 +62,6 @@ func TestValidateNewQueueProcessor(t *testing.T) {
 	configuration := &conf.Configuration{}
 	processor := NewProcessor(configuration).(*processor)
 
-	assert.Equal(t, int64(maxNumberOfMessages), processor.configuration.PollerConf.MaxNumberOfMessages)
 	assert.Equal(t, time.Duration(pollingWaitIntervalInMillis), processor.configuration.PollerConf.PollingWaitIntervalInMillis)
 }
 
@@ -210,7 +210,7 @@ func (m *MockWorkerPool) NumberOfAvailableWorker() int32 {
 	if m.NumberOfAvailableWorkerFunc != nil {
 		return m.NumberOfAvailableWorkerFunc()
 	}
-	return 1
+	return 0
 }
 
 func (m *MockWorkerPool) Start() error {

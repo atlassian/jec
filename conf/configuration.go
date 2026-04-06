@@ -158,7 +158,6 @@ func (f Flags) Args() []string {
 
 type PollerConf struct {
 	PollingWaitIntervalInMillis time.Duration `json:"pollingWaitIntervalInMillis" yaml:"pollingWaitIntervalInMillis"`
-	MaxNumberOfMessages         int64         `json:"maxNumberOfMessages" yaml:"maxNumberOfMessages"`
 }
 
 type PoolConf struct {
