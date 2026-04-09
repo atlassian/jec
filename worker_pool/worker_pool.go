@@ -12,7 +12,7 @@ import (
 const (
 	maxNumberOfWorker        = 12
 	minNumberOfWorker        = 4
-	queueSize                = 0
+	queueSize                = 10
 	keepAliveTimeInMillis    = 6000
 	monitoringPeriodInMillis = 15000
 )
@@ -57,11 +57,6 @@ func New(poolConf *conf.PoolConf) WorkerPool {
 		poolConf.MinNumberOfWorker = poolConf.MaxNumberOfWorker
 	}
 
-	if poolConf.QueueSize < 0 {
-		logrus.Infof("Queue size of the pool cannot be lesser than zero, default value[%d] is set.", queueSize)
-		poolConf.QueueSize = queueSize
-	}
-
 	if poolConf.KeepAliveTimeInMillis <= 0 {
 		logrus.Infof("Keep alive time should be greater than zero, default value[%d ms.] is set.", keepAliveTimeInMillis)
 		poolConf.KeepAliveTimeInMillis = keepAliveTimeInMillis
@@ -73,7 +68,7 @@ func New(poolConf *conf.PoolConf) WorkerPool {
 	}
 
 	return &workerPool{
-		jobQueue:         make(chan Job, poolConf.QueueSize),
+		jobQueue:         make(chan Job, queueSize),
 		quit:             make(chan struct{}),
 		quitNow:          make(chan struct{}),
 		poolConf:         poolConf,

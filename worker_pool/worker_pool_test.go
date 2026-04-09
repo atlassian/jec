@@ -1,9 +1,6 @@
 package worker_pool
 
 import (
-	"github.com/atlassian/jec/conf"
-	"github.com/sirupsen/logrus"
-	"github.com/stretchr/testify/assert"
 	"io/ioutil"
 	"math/cmplx"
 	"os"
@@ -11,12 +8,15 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/atlassian/jec/conf"
+	"github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/assert"
 )
 
 var testPoolConf = &conf.PoolConf{
 	MaxNumberOfWorker:        16,
 	MinNumberOfWorker:        2,
-	QueueSize:                queueSize,
 	KeepAliveTimeInMillis:    keepAliveTimeInMillis,
 	MonitoringPeriodInMillis: monitoringPeriodInMillis,
 }
@@ -44,13 +44,12 @@ func TestValidateNewWorkerPool(t *testing.T) {
 		-1,
 		-1,
 		-1,
-		-1,
 	}
 	pool := New(configuration).(*workerPool)
 
 	assert.Equal(t, int32(minNumberOfWorker), pool.poolConf.MinNumberOfWorker)
 	assert.Equal(t, int32(maxNumberOfWorker), pool.poolConf.MaxNumberOfWorker)
-	assert.Equal(t, int32(queueSize), pool.poolConf.QueueSize)
+	assert.Equal(t, int32(queueSize), cap(pool.jobQueue))
 	assert.Equal(t, time.Duration(keepAliveTimeInMillis), pool.poolConf.KeepAliveTimeInMillis)
 	assert.Equal(t, time.Duration(monitoringPeriodInMillis), pool.poolConf.MonitoringPeriodInMillis)
 }
@@ -59,7 +58,6 @@ func TestValidateWorkerNumbersNewWorkerPool(t *testing.T) {
 	configuration := &conf.PoolConf{
 		1,
 		2,
-		-1,
 		0,
 		0,
 	}
@@ -67,7 +65,7 @@ func TestValidateWorkerNumbersNewWorkerPool(t *testing.T) {
 
 	assert.Equal(t, int32(1), pool.poolConf.MinNumberOfWorker)
 	assert.Equal(t, int32(1), pool.poolConf.MaxNumberOfWorker)
-	assert.Equal(t, int32(queueSize), pool.poolConf.QueueSize)
+	assert.Equal(t, int32(queueSize), cap(pool.jobQueue))
 	assert.Equal(t, time.Duration(keepAliveTimeInMillis), pool.poolConf.KeepAliveTimeInMillis)
 	assert.Equal(t, time.Duration(monitoringPeriodInMillis), pool.poolConf.MonitoringPeriodInMillis)
 }
@@ -134,7 +132,6 @@ func BenchmarkWorkerPool(b *testing.B) {
 			&conf.PoolConf{
 				int32(size.workerSize),
 				2,
-				queueSize,
 				keepAliveTimeInMillis,
 				monitoringPeriodInMillis,
 			},
@@ -203,7 +200,6 @@ func BenchmarkWorkerPoolWithComparableFixedWorkerSize(b *testing.B) {
 			&conf.PoolConf{
 				int32(testCase.maxNumberOfWorker),
 				int32(minNumberOfWorker),
-				queueSize,
 				keepAliveTimeInMillis,
 				monitoringPeriodInMillis,
 			},
