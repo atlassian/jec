@@ -139,7 +139,7 @@ jobs:
         asset_content_type: application/zip
 
     - name: Upload Artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: Release Artifacts
         path: .release/**
