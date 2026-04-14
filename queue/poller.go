@@ -130,13 +130,13 @@ func (p *poller) fetchMessages() ([]*Message, error) {
 		return nil, err
 	}
 
-	var messages []*Message
-	err = json.Unmarshal(body, &messages)
+	var messageResponse MessageResponse
+	err = json.Unmarshal(body, &messageResponse)
 	if err != nil {
 		return nil, err
 	}
 
-	return messages, nil
+	return messageResponse.Messages, nil
 }
 
 func (p *poller) poll() (shouldWait bool) {
@@ -162,16 +162,16 @@ func (p *poller) poll() (shouldWait bool) {
 
 	// Submit messages (with dedup and tracking)
 	for i := 0; i < messageLength; i++ {
-		p.tracker.putIfAbsent(messages[i].MessageId, messages[i].MessageHandle)
+		p.tracker.putIfAbsent(messages[i].Id, messages[i].ReceiptHandle)
 
 		// Skip if already processed (dedup)
-		if p.tracker.IsProcessed(messages[i].MessageId) {
-			logrus.Debugf("Message[%s] already processed, skipping.", messages[i].MessageId)
+		if p.tracker.IsProcessed(messages[i].Id) {
+			logrus.Debugf("Message[%s] already processed, skipping.", messages[i].Id)
 			continue
 		}
 
 		p.queueMessageLogrus.
-			WithField("messageId", messages[i].MessageId).
+			WithField("id", messages[i].Id).
 			Info("Message body: ", messages[i].Body)
 
 		job := newJob(
@@ -186,10 +186,10 @@ func (p *poller) poll() (shouldWait bool) {
 			logrus.Debugf("Error occurred while submitting: %s.", err.Error())
 			return true
 		} else if !isSubmitted {
-			logrus.Debugf("Job[%s] could not be submitted.", messages[i].MessageId)
+			logrus.Debugf("Job[%s] could not be submitted.", messages[i].Id)
 		} else {
 			// Mark as processed only if successfully submitted
-			p.tracker.MarkProcessed(messages[i].MessageId)
+			p.tracker.MarkProcessed(messages[i].Id)
 		}
 	}
 
@@ -199,6 +199,7 @@ func (p *poller) poll() (shouldWait bool) {
 		if err != nil {
 			logrus.Errorf("Failed to delete messages from channel[%s]: %s", p.channelId, err.Error())
 		} else {
+			logrus.Errorf("Messages are succesfully deleted.")
 			p.tracker.Reset()
 		}
 	}

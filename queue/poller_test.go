@@ -48,7 +48,7 @@ func mockFetchMessages(messages []*Message, err error) func(r *retryer.Retryer, 
 		if err != nil {
 			return nil, err
 		}
-		body, _ := json.Marshal(messages)
+		body, _ := json.Marshal(MessageResponse{ChannelId: mockChannelId, Messages: messages})
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       ioutil.NopCloser(bytes.NewReader(body)),
@@ -137,10 +137,9 @@ func TestPollMaxMessage(t *testing.T) {
 	messages := make([]*Message, expected)
 	for i := int64(0); i < expected; i++ {
 		messages[i] = &Message{
-			MessageId:     strconv.FormatInt(i, 10),
-			MessageHandle: "handle-" + strconv.FormatInt(i, 10),
+			Id:            strconv.FormatInt(i, 10),
+			ReceiptHandle: "handle-" + strconv.FormatInt(i, 10),
 			Body:          "body",
-			ChannelId:     mockChannelId,
 		}
 	}
 
@@ -154,7 +153,7 @@ func TestPollMaxMessage(t *testing.T) {
 			}, nil
 		}
 		// Fetch messages
-		body, _ := json.Marshal(messages)
+		body, _ := json.Marshal(MessageResponse{ChannelId: mockChannelId, Messages: messages})
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       ioutil.NopCloser(bytes.NewReader(body)),
@@ -188,10 +187,9 @@ func TestPollFetchAllMessages(t *testing.T) {
 	messages := make([]*Message, messageCount)
 	for i := 0; i < messageCount; i++ {
 		messages[i] = &Message{
-			MessageId:     strconv.FormatInt(int64(i), 10),
-			MessageHandle: "handle-" + strconv.FormatInt(int64(i), 10),
+			Id:            strconv.FormatInt(int64(i), 10),
+			ReceiptHandle: "handle-" + strconv.FormatInt(int64(i), 10),
 			Body:          "body",
-			ChannelId:     mockChannelId,
 		}
 	}
 
@@ -205,7 +203,7 @@ func TestPollFetchAllMessages(t *testing.T) {
 			}, nil
 		}
 		// Fetch messages
-		body, _ := json.Marshal(messages)
+		body, _ := json.Marshal(MessageResponse{ChannelId: mockChannelId, Messages: messages})
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       ioutil.NopCloser(bytes.NewReader(body)),
@@ -237,10 +235,9 @@ func TestPollMessageSubmitFail(t *testing.T) {
 	messages := make([]*Message, expected)
 	for i := int64(0); i < expected; i++ {
 		messages[i] = &Message{
-			MessageId:     strconv.FormatInt(i, 10),
-			MessageHandle: "handle-" + strconv.FormatInt(i, 10),
+			Id:            strconv.FormatInt(i, 10),
+			ReceiptHandle: "handle-" + strconv.FormatInt(i, 10),
 			Body:          "body",
-			ChannelId:     mockChannelId,
 		}
 	}
 	poller.retryer.DoFunc = mockFetchMessages(messages, nil)
@@ -270,10 +267,9 @@ func TestPollMessageSubmitError(t *testing.T) {
 	messages := make([]*Message, expected)
 	for i := int64(0); i < expected; i++ {
 		messages[i] = &Message{
-			MessageId:     strconv.FormatInt(i, 10),
-			MessageHandle: "handle-" + strconv.FormatInt(i, 10),
+			Id:            strconv.FormatInt(i, 10),
+			ReceiptHandle: "handle-" + strconv.FormatInt(i, 10),
 			Body:          "body",
-			ChannelId:     mockChannelId,
 		}
 	}
 	poller.retryer.DoFunc = mockFetchMessages(messages, nil)
@@ -301,10 +297,9 @@ func TestPollMessageSubmitSuccess(t *testing.T) {
 	messages := make([]*Message, 5)
 	for i := 0; i < 5; i++ {
 		messages[i] = &Message{
-			MessageId:     strconv.FormatInt(int64(i), 10),
-			MessageHandle: "handle-" + strconv.FormatInt(int64(i), 10),
+			Id:            strconv.FormatInt(int64(i), 10),
+			ReceiptHandle: "handle-" + strconv.FormatInt(int64(i), 10),
 			Body:          "body",
-			ChannelId:     mockChannelId,
 		}
 	}
 
@@ -313,12 +308,12 @@ func TestPollMessageSubmitSuccess(t *testing.T) {
 		if request.Method == http.MethodDelete {
 			deleteCallCount++
 			return &http.Response{
-				StatusCode: http.StatusOK,
+				StatusCode: http.StatusNoContent,
 				Body:       ioutil.NopCloser(bytes.NewReader([]byte(""))),
 			}, nil
 		}
 		// Fetch messages
-		body, _ := json.Marshal(messages)
+		body, _ := json.Marshal(MessageResponse{ChannelId: mockChannelId, Messages: messages})
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       ioutil.NopCloser(bytes.NewReader(body)),
@@ -347,10 +342,9 @@ func TestPollWithDedup(t *testing.T) {
 	messages := make([]*Message, 3)
 	for i := 0; i < 3; i++ {
 		messages[i] = &Message{
-			MessageId:     strconv.FormatInt(int64(i), 10),
-			MessageHandle: "handle-" + strconv.FormatInt(int64(i), 10),
+			Id:            strconv.FormatInt(int64(i), 10),
+			ReceiptHandle: "handle-" + strconv.FormatInt(int64(i), 10),
 			Body:          "body",
-			ChannelId:     mockChannelId,
 		}
 	}
 
@@ -359,12 +353,12 @@ func TestPollWithDedup(t *testing.T) {
 		if request.Method == http.MethodDelete {
 			deleteCallCount++
 			return &http.Response{
-				StatusCode: http.StatusOK,
+				StatusCode: http.StatusNoContent,
 				Body:       ioutil.NopCloser(bytes.NewReader([]byte(""))),
 			}, nil
 		}
 		// Fetch messages
-		body, _ := json.Marshal(messages)
+		body, _ := json.Marshal(MessageResponse{ChannelId: mockChannelId, Messages: messages})
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       ioutil.NopCloser(bytes.NewReader(body)),
@@ -395,10 +389,9 @@ func TestPollAllSubmittedDeleteSuccess(t *testing.T) {
 	messages := make([]*Message, 3)
 	for i := 0; i < 3; i++ {
 		messages[i] = &Message{
-			MessageId:     strconv.FormatInt(int64(i), 10),
-			MessageHandle: "handle-" + strconv.FormatInt(int64(i), 10),
+			Id:            strconv.FormatInt(int64(i), 10),
+			ReceiptHandle: "handle-" + strconv.FormatInt(int64(i), 10),
 			Body:          "body",
-			ChannelId:     mockChannelId,
 		}
 	}
 
@@ -409,12 +402,12 @@ func TestPollAllSubmittedDeleteSuccess(t *testing.T) {
 			// Verify the tracker has messages before delete
 			assert.Equal(t, 3, len(poller.tracker.messages))
 			return &http.Response{
-				StatusCode: http.StatusOK,
+				StatusCode: http.StatusNoContent,
 				Body:       ioutil.NopCloser(bytes.NewReader([]byte(""))),
 			}, nil
 		}
 		// Fetch messages
-		body, _ := json.Marshal(messages)
+		body, _ := json.Marshal(MessageResponse{ChannelId: mockChannelId, Messages: messages})
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       ioutil.NopCloser(bytes.NewReader(body)),
@@ -446,10 +439,9 @@ func TestPollAllSubmittedDeleteFailure(t *testing.T) {
 	messages := make([]*Message, 2)
 	for i := 0; i < 2; i++ {
 		messages[i] = &Message{
-			MessageId:     strconv.FormatInt(int64(i), 10),
-			MessageHandle: "handle-" + strconv.FormatInt(int64(i), 10),
+			Id:            strconv.FormatInt(int64(i), 10),
+			ReceiptHandle: "handle-" + strconv.FormatInt(int64(i), 10),
 			Body:          "body",
-			ChannelId:     mockChannelId,
 		}
 	}
 
@@ -463,7 +455,7 @@ func TestPollAllSubmittedDeleteFailure(t *testing.T) {
 			}, nil
 		}
 		// Fetch messages
-		body, _ := json.Marshal(messages)
+		body, _ := json.Marshal(MessageResponse{ChannelId: mockChannelId, Messages: messages})
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       ioutil.NopCloser(bytes.NewReader(body)),
@@ -492,10 +484,9 @@ func TestPollPartialSubmitNoDelete(t *testing.T) {
 	messages := make([]*Message, 3)
 	for i := 0; i < 3; i++ {
 		messages[i] = &Message{
-			MessageId:     strconv.FormatInt(int64(i), 10),
-			MessageHandle: "handle-" + strconv.FormatInt(int64(i), 10),
+			Id:            strconv.FormatInt(int64(i), 10),
+			ReceiptHandle: "handle-" + strconv.FormatInt(int64(i), 10),
 			Body:          "body",
-			ChannelId:     mockChannelId,
 		}
 	}
 	poller.retryer.DoFunc = mockFetchMessages(messages, nil)

@@ -80,7 +80,7 @@ func TestProcess(t *testing.T) {
 func testProcessSuccessfully(t *testing.T) {
 
 	body := `{"action":"Create", "requestId": "RequestId"}`
-	message := Message{Body: body, MessageId: "MessageId"}
+	message := Message{Body: body, Id: "MessageId"}
 	queueMessage := NewMessageHandler(nil, mockActionSpecs, mockActionLoggers)
 
 	runbook.ExecuteFunc = func(executionId string, executablePath string, args, environmentVars []string, stdout, stderr io.Writer) (string, error) {
@@ -103,7 +103,7 @@ func testProcessHttpActionSuccessfully(t *testing.T) {
 	}
 
 	body := `{"actionType":"http", "action":"Retrieve", "requestId": "RequestId"}`
-	message := Message{Body: body, MessageId: "MessageId"}
+	message := Message{Body: body, Id: "MessageId"}
 	queueMessage := NewMessageHandler(nil, mockActionSpecs, mockActionLoggers)
 
 	result, err := queueMessage.Handle(message)
