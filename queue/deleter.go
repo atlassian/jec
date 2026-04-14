@@ -54,7 +54,7 @@ func deleteMessages(baseUrl, apiKey, channelId string, r *retryer.Retryer, entri
 	}
 	defer response.Body.Close()
 
-	if response.StatusCode != http.StatusOK {
+	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusNoContent {
 		body, _ := ioutil.ReadAll(response.Body)
 		return errors.Errorf("Failed to delete messages from channel[%s], status: %s, message: %s", channelId, response.Status, body)
 	}

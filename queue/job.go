@@ -38,7 +38,7 @@ func newJob(messageHandler MessageHandler, message Message, apiKey, baseUrl stri
 }
 
 func (j *job) Id() string {
-	return j.message.MessageId
+	return j.message.Id
 }
 
 func (j *job) Execute() error {

@@ -24,9 +24,8 @@ func newJobTest() *job {
 	}
 
 	message := Message{
-		MessageId: mockMessageId,
-		Body:      "mockBody",
-		ChannelId: mockChannelId,
+		Id:   mockMessageId,
+		Body: "mockBody",
 	}
 
 	return &job{

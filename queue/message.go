@@ -13,12 +13,17 @@ import (
 	"time"
 )
 
+// MessageResponse represents the response from the JEC Platform API containing messages for a channel.
+type MessageResponse struct {
+	ChannelId string     `json:"channelId"`
+	Messages  []*Message `json:"messages"`
+}
+
 // Message represents a message fetched from the JEC Platform API.
 type Message struct {
-	MessageId     string `json:"messageId"`
+	Id            string `json:"id"`
 	Body          string `json:"body"`
-	ChannelId     string `json:"channelId"`
-	MessageHandle string `json:"messageHandle"`
+	ReceiptHandle string `json:"receiptHandle"`
 }
 
 type MessageHandler interface {
@@ -80,7 +85,7 @@ func (mh *messageHandler) Handle(message Message) (*runbook.ActionResultPayload,
 	case *runbook.ExecError:
 		result.IsSuccessful = false
 		result.FailureMessage = fmt.Sprintf("Err: %s, Stderr: %s", err.Error(), err.Stderr)
-		logrus.Debugf("Action[%s] execution of message[%s] failed: %s Stderr: %s", action, message.MessageId, err.Error(), err.Stderr)
+		logrus.Debugf("Action[%s] execution of message[%s] failed: %s Stderr: %s", action, message.Id, err.Error(), err.Stderr)
 	case nil:
 		result.IsSuccessful = true
 		if !queuePayload.DiscardScriptResponse && queuePayload.ActionType == HttpActionType {
@@ -89,13 +94,13 @@ func (mh *messageHandler) Handle(message Message) (*runbook.ActionResultPayload,
 			if err != nil {
 				result.IsSuccessful = false
 				logrus.Debugf("Http Action[%s] execution of message[%s] failed, could not parse http response fields: %s, error: %s",
-					action, message.MessageId, executionResult, err.Error())
+					action, message.Id, executionResult, err.Error())
 				result.FailureMessage = "Could not parse http response fields: " + executionResult
 			} else {
 				result.HttpResponse = httpResult
 			}
 		}
-		logrus.Debugf("Action[%s] execution of message[%s] has been completed and it took %f seconds.", action, message.MessageId, took.Seconds())
+		logrus.Debugf("Action[%s] execution of message[%s] has been completed and it took %f seconds.", action, message.Id, took.Seconds())
 
 	default:
 		return nil, err
@@ -158,7 +163,7 @@ func (mh *messageHandler) execute(mappedAction *conf.MappedAction, message *Mess
 		}
 		stderr := mh.actionLoggers[mappedAction.Stderr]
 
-		callbackContext, err := runbook.ExecuteFunc(message.MessageId, mappedAction.Filepath, args, env, stdout, stderr)
+		callbackContext, err := runbook.ExecuteFunc(message.Id, mappedAction.Filepath, args, env, stdout, stderr)
 		return stdoutBuff.String(), callbackContext, err
 	default:
 		return "", "", errors.Errorf("Unknown action sourceType[%s].", sourceType)
