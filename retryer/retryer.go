@@ -43,7 +43,7 @@ func shouldRetry(statusCode int) bool {
 }
 
 func getWaitTime(retryCount int) time.Duration {
-	waitTime := math.Pow(2, float64(retryCount)) * 100
+	waitTime := math.Pow(2, float64(retryCount)) * 1000
 	return time.Duration(waitTime) * time.Millisecond
 }
 

@@ -1,0 +1,2 @@
+go build main.go
+sudo JEC_CONF_SOURCE_TYPE=local JEC_CONF_LOCAL_FILEPATH=/Users/mozturk/GolandProjects/jec/_conf/jec-config.json ./main
