@@ -199,12 +199,12 @@ func (p *poller) poll() (shouldWait bool) {
 		if err != nil {
 			logrus.Errorf("Failed to delete messages from channel[%s]: %s", p.channelId, err.Error())
 		} else {
-			logrus.Errorf("Messages are succesfully deleted.")
+			logrus.Debugf("Messages are succesfully deleted.")
 			p.tracker.Reset()
 		}
 	}
 
-	return false
+	return true
 }
 
 func (p *poller) wait(pollingWaitInterval time.Duration) {

@@ -12,18 +12,46 @@ import (
 	"time"
 )
 
-const maxRetryCount = 5
-const timeout = 40 * time.Second
+const defaultMaxRetryCount = 3
+const defaultInitialWaitTime = 1000
+const defaultTimeout = 40 * time.Second
 
-var DefaultClient = &http.Client{Timeout: timeout}
+var DefaultClient = &http.Client{Timeout: defaultTimeout}
 
 var retryStatusCodes = map[int]struct{}{
 	429: {},
 }
 
 type Retryer struct {
-	DoFunc func(retryer *Retryer, request *Request) (*http.Response, error)
-	client *http.Client
+	DoFunc          func(retryer *Retryer, request *Request) (*http.Response, error)
+	MaxRetryCount   int
+	InitialWaitTime time.Duration
+	Timeout         time.Duration
+	client          *http.Client
+}
+
+func (r *Retryer) maxRetryCount() int {
+	if r.MaxRetryCount > 0 {
+		return r.MaxRetryCount
+	}
+	return defaultMaxRetryCount
+}
+
+func (r *Retryer) initialWaitTime() float64 {
+	if r.InitialWaitTime > 0 {
+		return float64(r.InitialWaitTime / time.Millisecond)
+	}
+	return defaultInitialWaitTime
+}
+
+func (r *Retryer) httpClient() *http.Client {
+	if r.client != nil {
+		return r.client
+	}
+	if r.Timeout > 0 {
+		return &http.Client{Timeout: r.Timeout}
+	}
+	return DefaultClient
 }
 
 func (r *Retryer) Do(request *Request) (*http.Response, error) {
@@ -42,17 +70,16 @@ func shouldRetry(statusCode int) bool {
 	return false
 }
 
-func getWaitTime(retryCount int) time.Duration {
-	waitTime := math.Pow(2, float64(retryCount)) * 100
+func getWaitTime(retryCount int, initialWaitTime float64) time.Duration {
+	waitTime := math.Pow(2, float64(retryCount)) * initialWaitTime
 	return time.Duration(waitTime) * time.Millisecond
 }
 
 func DoWithExponentialBackoff(retryer *Retryer, request *Request) (*http.Response, error) {
 
-	client := DefaultClient
-	if retryer.client != nil {
-		client = retryer.client
-	}
+	client := retryer.httpClient()
+	maxRetryCount := retryer.maxRetryCount()
+	initialWaitTime := retryer.initialWaitTime()
 
 	retryCount := 0
 	errMessage := ""
@@ -92,7 +119,7 @@ func DoWithExponentialBackoff(retryer *Retryer, request *Request) (*http.Respons
 			break
 		}
 
-		waitDuration := getWaitTime(retryCount - 1)
+		waitDuration := getWaitTime(retryCount-1, initialWaitTime)
 		time.Sleep(waitDuration)
 	}
 
