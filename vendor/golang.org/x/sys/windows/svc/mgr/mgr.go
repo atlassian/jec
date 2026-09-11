@@ -2,13 +2,12 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build windows
+//go:build windows
 
 // Package mgr can be used to manage Windows service programs.
 // It can be used to install and remove them. It can also start,
 // stop and pause them. The package can query / change current
 // service state and config parameters.
-//
 package mgr
 
 import (
@@ -17,7 +16,6 @@ import (
 	"unicode/utf16"
 	"unsafe"
 
-	"golang.org/x/sys/internal/unsafeheader"
 	"golang.org/x/sys/windows"
 )
 
@@ -36,7 +34,11 @@ func Connect() (*Mgr, error) {
 func ConnectRemote(host string) (*Mgr, error) {
 	var s *uint16
 	if host != "" {
-		s = syscall.StringToUTF16Ptr(host)
+		var err error
+		s, err = syscall.UTF16PtrFromString(host)
+		if err != nil {
+			return nil, err
+		}
 	}
 	h, err := windows.OpenSCManager(s, nil, windows.SC_MANAGER_ALL_ACCESS)
 	if err != nil {
@@ -80,11 +82,11 @@ func (m *Mgr) LockStatus() (*LockStatus, error) {
 	}
 }
 
-func toPtr(s string) *uint16 {
+func toPtr(s string) (*uint16, error) {
 	if len(s) == 0 {
-		return nil
+		return nil, nil
 	}
-	return syscall.StringToUTF16Ptr(s)
+	return syscall.UTF16PtrFromString(s)
 }
 
 // toStringBlock terminates strings in ss with 0, and then
@@ -117,9 +119,6 @@ func (m *Mgr) CreateService(name, exepath string, c Config, args ...string) (*Se
 	if c.StartType == 0 {
 		c.StartType = StartManual
 	}
-	if c.ErrorControl == 0 {
-		c.ErrorControl = ErrorNormal
-	}
 	if c.ServiceType == 0 {
 		c.ServiceType = windows.SERVICE_WIN32_OWN_PROCESS
 	}
@@ -127,10 +126,34 @@ func (m *Mgr) CreateService(name, exepath string, c Config, args ...string) (*Se
 	for _, v := range args {
 		s += " " + syscall.EscapeArg(v)
 	}
-	h, err := windows.CreateService(m.Handle, toPtr(name), toPtr(c.DisplayName),
+	namePointer, err := toPtr(name)
+	if err != nil {
+		return nil, err
+	}
+	displayNamePointer, err := toPtr(c.DisplayName)
+	if err != nil {
+		return nil, err
+	}
+	sPointer, err := toPtr(s)
+	if err != nil {
+		return nil, err
+	}
+	loadOrderGroupPointer, err := toPtr(c.LoadOrderGroup)
+	if err != nil {
+		return nil, err
+	}
+	serviceStartNamePointer, err := toPtr(c.ServiceStartName)
+	if err != nil {
+		return nil, err
+	}
+	passwordPointer, err := toPtr(c.Password)
+	if err != nil {
+		return nil, err
+	}
+	h, err := windows.CreateService(m.Handle, namePointer, displayNamePointer,
 		windows.SERVICE_ALL_ACCESS, c.ServiceType,
-		c.StartType, c.ErrorControl, toPtr(s), toPtr(c.LoadOrderGroup),
-		nil, toStringBlock(c.Dependencies), toPtr(c.ServiceStartName), toPtr(c.Password))
+		c.StartType, c.ErrorControl, sPointer, loadOrderGroupPointer,
+		nil, toStringBlock(c.Dependencies), serviceStartNamePointer, passwordPointer)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +187,12 @@ func (m *Mgr) CreateService(name, exepath string, c Config, args ...string) (*Se
 // OpenService retrieves access to service name, so it can
 // be interrogated and controlled.
 func (m *Mgr) OpenService(name string) (*Service, error) {
-	h, err := windows.OpenService(m.Handle, syscall.StringToUTF16Ptr(name), windows.SERVICE_ALL_ACCESS)
+	namePointer, err := syscall.UTF16PtrFromString(name)
+	if err != nil {
+		return nil, err
+	}
+
+	h, err := windows.OpenService(m.Handle, namePointer, windows.SERVICE_ALL_ACCESS)
 	if err != nil {
 		return nil, err
 	}
@@ -202,12 +230,7 @@ func (m *Mgr) ListServices() ([]string, error) {
 	if servicesReturned == 0 {
 		return nil, nil
 	}
-
-	var services []windows.ENUM_SERVICE_STATUS_PROCESS
-	hdr := (*unsafeheader.Slice)(unsafe.Pointer(&services))
-	hdr.Data = unsafe.Pointer(&buf[0])
-	hdr.Len = int(servicesReturned)
-	hdr.Cap = int(servicesReturned)
+	services := unsafe.Slice((*windows.ENUM_SERVICE_STATUS_PROCESS)(unsafe.Pointer(&buf[0])), int(servicesReturned))
 
 	var names []string
 	for _, s := range services {

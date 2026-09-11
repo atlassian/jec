@@ -1,9 +1,13 @@
-# go-billy [![GoDoc](https://godoc.org/gopkg.in/go-git/go-billy.v5?status.svg)](https://pkg.go.dev/github.com/go-git/go-billy) [![Test](https://github.com/go-git/go-billy/workflows/Test/badge.svg)](https://github.com/go-git/go-billy/actions?query=workflow%3ATest)
+# go-billy [![GoDoc](https://godoc.org/gopkg.in/go-git/go-billy.v5?status.svg)](https://pkg.go.dev/github.com/go-git/go-billy/v5) [![Test](https://github.com/go-git/go-billy/workflows/Test/badge.svg)](https://github.com/go-git/go-billy/actions?query=workflow%3ATest)
 
 The missing interface filesystem abstraction for Go.
 Billy implements an interface based on the `os` standard library, allowing to develop applications without dependency on the underlying storage. Makes it virtually free to implement mocks and testing over filesystem operations.
 
 Billy was born as part of [go-git/go-git](https://github.com/go-git/go-git) project.
+
+## Version support
+
+go-billy v5 is in maintenance mode. Users should upgrade to [go-billy v6](https://pkg.go.dev/github.com/go-git/go-billy/v6) where possible.
 
 ## Installation
 

@@ -4,8 +4,10 @@ package ssh
 import (
 	"context"
 	"fmt"
+	"net"
 	"reflect"
 	"strconv"
+	"strings"
 
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/internal/common"
@@ -46,7 +48,9 @@ type runner struct {
 func (r *runner) Command(cmd string, ep *transport.Endpoint, auth transport.AuthMethod) (common.Command, error) {
 	c := &command{command: cmd, endpoint: ep, config: r.config}
 	if auth != nil {
-		c.setAuth(auth)
+		if err := c.setAuth(auth); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := c.connect(); err != nil {
@@ -90,8 +94,14 @@ func (c *command) Close() error {
 	//XXX: If did read the full packfile, then the session might be already
 	//     closed.
 	_ = c.Session.Close()
+	err := c.client.Close()
 
-	return c.client.Close()
+	//XXX: in go1.16+ we can use errors.Is(err, net.ErrClosed)
+	if err != nil && strings.HasSuffix(err.Error(), "use of closed network connection") {
+		return nil
+	}
+
+	return err
 }
 
 // connect connects to the SSH server, unless a AuthMethod was set with
@@ -114,10 +124,24 @@ func (c *command) connect() error {
 	if err != nil {
 		return err
 	}
+	hostWithPort := c.getHostWithPort()
+	if config.HostKeyCallback == nil {
+		db, err := NewKnownHostsDb()
+		if err != nil {
+			return err
+		}
+		config.HostKeyCallback = db.HostKeyCallback()
+		config.HostKeyAlgorithms = db.HostKeyAlgorithms(hostWithPort)
+	} else {
+		// If the user gave a custom HostKeyCallback, we do not try to detect host key algorithms
+		// based on knownhosts functionality, as the user may be requesting a FixedKey or using a
+		// different key approval strategy. In that case, the user is responsible for populating
+		// HostKeyAlgorithms appropriately
+	}
 
 	overrideConfig(c.config, config)
 
-	c.client, err = dial("tcp", c.getHostWithPort(), config)
+	c.client, err = dial("tcp", hostWithPort, c.endpoint.Proxy, config)
 	if err != nil {
 		return err
 	}
@@ -132,7 +156,7 @@ func (c *command) connect() error {
 	return nil
 }
 
-func dial(network, addr string, config *ssh.ClientConfig) (*ssh.Client, error) {
+func dial(network, addr string, proxyOpts transport.ProxyOptions, config *ssh.ClientConfig) (*ssh.Client, error) {
 	var (
 		ctx    = context.Background()
 		cancel context.CancelFunc
@@ -144,10 +168,33 @@ func dial(network, addr string, config *ssh.ClientConfig) (*ssh.Client, error) {
 	}
 	defer cancel()
 
-	conn, err := proxy.Dial(ctx, network, addr)
-	if err != nil {
-		return nil, err
+	var conn net.Conn
+	var dialErr error
+
+	if proxyOpts.URL != "" {
+		proxyUrl, err := proxyOpts.FullURL()
+		if err != nil {
+			return nil, err
+		}
+		dialer, err := proxy.FromURL(proxyUrl, proxy.Direct)
+		if err != nil {
+			return nil, err
+		}
+
+		// Try to use a ContextDialer, but fall back to a Dialer if that goes south.
+		ctxDialer, ok := dialer.(proxy.ContextDialer)
+		if !ok {
+			return nil, fmt.Errorf("expected ssh proxy dialer to be of type %s; got %s",
+				reflect.TypeOf(ctxDialer), reflect.TypeOf(dialer))
+		}
+		conn, dialErr = ctxDialer.DialContext(ctx, "tcp", addr)
+	} else {
+		conn, dialErr = proxy.Dial(ctx, network, addr)
 	}
+	if dialErr != nil {
+		return nil, dialErr
+	}
+
 	c, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
 	if err != nil {
 		return nil, err
@@ -166,7 +213,7 @@ func (c *command) getHostWithPort() string {
 		port = DefaultPort
 	}
 
-	return fmt.Sprintf("%s:%d", host, port)
+	return net.JoinHostPort(host, strconv.Itoa(port))
 }
 
 func (c *command) doGetHostWithPortFromSSHConfig() (addr string, found bool) {
@@ -194,7 +241,7 @@ func (c *command) doGetHostWithPortFromSSHConfig() (addr string, found bool) {
 		}
 	}
 
-	addr = fmt.Sprintf("%s:%d", host, port)
+	addr = net.JoinHostPort(host, strconv.Itoa(port))
 	return
 }
 
@@ -205,7 +252,39 @@ func (c *command) setAuthFromEndpoint() error {
 }
 
 func endpointToCommand(cmd string, ep *transport.Endpoint) string {
-	return fmt.Sprintf("%s '%s'", cmd, ep.Path)
+	var b strings.Builder
+	b.WriteString(cmd)
+	b.WriteByte(' ')
+	writeShellQuote(&b, ep.Path)
+	return b.String()
+}
+
+// writeShellQuote writes s to b, wrapped in single quotes with
+// embedded single quotes and exclamation marks escaped using the
+// POSIX close-escape-reopen idiom:
+//
+//	' becomes '\''
+//	! becomes '\!'
+//
+// It is a direct port of canonical Git's sq_quote_buf (quote.c).
+// The bang escape keeps the result safe when re-evaluated under
+// csh-derived shells that perform history expansion. The output is
+// safe to pass as a single argument through any POSIX shell and
+// round-trips through git-shell's sq_dequote_to_argv.
+func writeShellQuote(b *strings.Builder, s string) {
+	b.Grow(len(s) + 2)
+	b.WriteByte('\'')
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '\'' || c == '!' {
+			b.WriteString(`'\`)
+			b.WriteByte(c)
+			b.WriteByte('\'')
+			continue
+		}
+		b.WriteByte(c)
+	}
+	b.WriteByte('\'')
 }
 
 func overrideConfig(overrides *ssh.ClientConfig, c *ssh.ClientConfig) {

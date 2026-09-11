@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build windows
+//go:build windows
 
 package mgr
 
@@ -12,7 +12,6 @@ import (
 	"time"
 	"unsafe"
 
-	"golang.org/x/sys/internal/unsafeheader"
 	"golang.org/x/sys/windows"
 )
 
@@ -69,12 +68,7 @@ func (s *Service) RecoveryActions() ([]RecoveryAction, error) {
 		return nil, err
 	}
 
-	var actions []windows.SC_ACTION
-	hdr := (*unsafeheader.Slice)(unsafe.Pointer(&actions))
-	hdr.Data = unsafe.Pointer(p.Actions)
-	hdr.Len = int(p.ActionsCount)
-	hdr.Cap = int(p.ActionsCount)
-
+	actions := unsafe.Slice(p.Actions, int(p.ActionsCount))
 	var recoveryActions []RecoveryAction
 	for _, action := range actions {
 		recoveryActions = append(recoveryActions, RecoveryAction{Type: int(action.Type), Delay: time.Duration(action.Delay) * time.Millisecond})
@@ -105,8 +99,13 @@ func (s *Service) ResetPeriod() (uint32, error) {
 // SetRebootMessage sets service s reboot message.
 // If msg is "", the reboot message is deleted and no message is broadcast.
 func (s *Service) SetRebootMessage(msg string) error {
+	msgPointer, err := syscall.UTF16PtrFromString(msg)
+	if err != nil {
+		return err
+	}
+
 	rActions := windows.SERVICE_FAILURE_ACTIONS{
-		RebootMsg: syscall.StringToUTF16Ptr(msg),
+		RebootMsg: msgPointer,
 	}
 	return windows.ChangeServiceConfig2(s.Handle, windows.SERVICE_CONFIG_FAILURE_ACTIONS, (*byte)(unsafe.Pointer(&rActions)))
 }
@@ -124,8 +123,13 @@ func (s *Service) RebootMessage() (string, error) {
 // SetRecoveryCommand sets the command line of the process to execute in response to the RunCommand service controller action.
 // If cmd is "", the command is deleted and no program is run when the service fails.
 func (s *Service) SetRecoveryCommand(cmd string) error {
+	cmdPointer, err := syscall.UTF16PtrFromString(cmd)
+	if err != nil {
+		return err
+	}
+
 	rActions := windows.SERVICE_FAILURE_ACTIONS{
-		Command: syscall.StringToUTF16Ptr(cmd),
+		Command: cmdPointer,
 	}
 	return windows.ChangeServiceConfig2(s.Handle, windows.SERVICE_CONFIG_FAILURE_ACTIONS, (*byte)(unsafe.Pointer(&rActions)))
 }
@@ -138,4 +142,31 @@ func (s *Service) RecoveryCommand() (string, error) {
 	}
 	p := (*windows.SERVICE_FAILURE_ACTIONS)(unsafe.Pointer(&b[0]))
 	return windows.UTF16PtrToString(p.Command), nil
+}
+
+// SetRecoveryActionsOnNonCrashFailures sets the failure actions flag. If the
+// flag is set to false, recovery actions will only be performed if the service
+// terminates without reporting a status of SERVICE_STOPPED. If the flag is set
+// to true, recovery actions are also performed if the service stops with a
+// nonzero exit code.
+func (s *Service) SetRecoveryActionsOnNonCrashFailures(flag bool) error {
+	var setting windows.SERVICE_FAILURE_ACTIONS_FLAG
+	if flag {
+		setting.FailureActionsOnNonCrashFailures = 1
+	}
+	return windows.ChangeServiceConfig2(s.Handle, windows.SERVICE_CONFIG_FAILURE_ACTIONS_FLAG, (*byte)(unsafe.Pointer(&setting)))
+}
+
+// RecoveryActionsOnNonCrashFailures returns the current value of the failure
+// actions flag. If the flag is set to false, recovery actions will only be
+// performed if the service terminates without reporting a status of
+// SERVICE_STOPPED. If the flag is set to true, recovery actions are also
+// performed if the service stops with a nonzero exit code.
+func (s *Service) RecoveryActionsOnNonCrashFailures() (bool, error) {
+	b, err := s.queryServiceConfig2(windows.SERVICE_CONFIG_FAILURE_ACTIONS_FLAG)
+	if err != nil {
+		return false, err
+	}
+	p := (*windows.SERVICE_FAILURE_ACTIONS_FLAG)(unsafe.Pointer(&b[0]))
+	return p.FailureActionsOnNonCrashFailures != 0, nil
 }
