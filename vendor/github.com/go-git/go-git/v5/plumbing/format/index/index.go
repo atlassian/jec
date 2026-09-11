@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-git/go-git/v5/plumbing"
@@ -53,6 +54,8 @@ type Index struct {
 	ResolveUndo *ResolveUndo
 	// EndOfIndexEntry represents the 'End of Index Entry' extension
 	EndOfIndexEntry *EndOfIndexEntry
+	// ModTime is the modification time of the index file
+	ModTime time.Time
 }
 
 // Add creates a new Entry and returns it. The caller should first check that
@@ -210,4 +213,21 @@ type EndOfIndexEntry struct {
 	// Hash is a SHA-1 over the extension types and their sizes (but not
 	//	their contents).
 	Hash plumbing.Hash
+}
+
+// SkipUnless applies patterns in the form of A, A/B, A/B/C
+// to the index to prevent the files from being checked out
+func (i *Index) SkipUnless(patterns []string) {
+	for _, e := range i.Entries {
+		var include bool
+		for _, pattern := range patterns {
+			if strings.HasPrefix(e.Name, pattern) {
+				include = true
+				break
+			}
+		}
+		if !include {
+			e.SkipWorktree = true
+		}
+	}
 }

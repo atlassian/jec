@@ -52,7 +52,7 @@ type Conn interface {
 
 	// SendRequest sends a global request, and returns the
 	// reply. If wantReply is true, it returns the response status
-	// and payload. See also RFC4254, section 4.
+	// and payload. See also RFC 4254, section 4.
 	SendRequest(name string, wantReply bool, payload []byte) (bool, []byte, error)
 
 	// OpenChannel tries to open an channel. If the request is
@@ -74,6 +74,13 @@ type Conn interface {
 	//   Disconnect
 }
 
+// AlgorithmsConnMetadata is a ConnMetadata that can return the algorithms
+// negotiated between client and server.
+type AlgorithmsConnMetadata interface {
+	ConnMetadata
+	Algorithms() NegotiatedAlgorithms
+}
+
 // DiscardRequests consumes and rejects all requests from the
 // passed-in channel.
 func DiscardRequests(in <-chan *Request) {
@@ -84,9 +91,17 @@ func DiscardRequests(in <-chan *Request) {
 	}
 }
 
+// A connTransport represents the transport for a connection.
+type connTransport interface {
+	packetConn
+	getAlgorithms() NegotiatedAlgorithms
+	getSessionID() []byte
+	waitSession() error
+}
+
 // A connection represents an incoming connection.
 type connection struct {
-	transport *handshakeTransport
+	transport connTransport
 	sshConn
 
 	// The connection protocol.
@@ -97,7 +112,7 @@ func (c *connection) Close() error {
 	return c.sshConn.conn.Close()
 }
 
-// sshconn provides net.Conn metadata, but disallows direct reads and
+// sshConn provides net.Conn metadata, but disallows direct reads and
 // writes.
 type sshConn struct {
 	conn net.Conn
@@ -106,6 +121,7 @@ type sshConn struct {
 	sessionID     []byte
 	clientVersion []byte
 	serverVersion []byte
+	algorithms    NegotiatedAlgorithms
 }
 
 func dup(src []byte) []byte {
@@ -140,4 +156,8 @@ func (c *sshConn) ClientVersion() []byte {
 
 func (c *sshConn) ServerVersion() []byte {
 	return dup(c.serverVersion)
+}
+
+func (c *sshConn) Algorithms() NegotiatedAlgorithms {
+	return c.algorithms
 }

@@ -8,13 +8,15 @@
 // ssh-agent process using the sample server.
 //
 // References:
-//  [PROTOCOL.agent]: https://tools.ietf.org/html/draft-miller-ssh-agent-00
-package agent // import "golang.org/x/crypto/ssh/agent"
+//
+//	[PROTOCOL.agent]: https://tools.ietf.org/html/draft-miller-ssh-agent-00
+package agent
 
 import (
 	"bytes"
 	"crypto/dsa"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rsa"
 	"encoding/base64"
@@ -24,9 +26,8 @@ import (
 	"io"
 	"math/big"
 	"sync"
+	"sync/atomic"
 
-	"crypto"
-	"golang.org/x/crypto/ed25519"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -93,7 +94,7 @@ type ExtendedAgent interface {
 type ConstraintExtension struct {
 	// ExtensionName consist of a UTF-8 string suffixed by the
 	// implementation domain following the naming scheme defined
-	// in Section 4.2 of [RFC4251], e.g.  "foo@example.com".
+	// in Section 4.2 of RFC 4251, e.g.  "foo@example.com".
 	ExtensionName string
 	// ExtensionDetails contains the actual content of the extended
 	// constraint.
@@ -141,9 +142,14 @@ const (
 	agentAddSmartcardKeyConstrained = 26
 
 	// 3.7 Key constraint identifiers
-	agentConstrainLifetime  = 1
-	agentConstrainConfirm   = 2
-	agentConstrainExtension = 3
+	agentConstrainLifetime = 1
+	agentConstrainConfirm  = 2
+	// Constraint extension identifier up to version 2 of the protocol. A
+	// backward incompatible change will be required if we want to add support
+	// for SSH_AGENT_CONSTRAIN_MAXSIGN which uses the same ID.
+	agentConstrainExtensionV00 = 3
+	// Constraint extension identifier in version 3 and later of the protocol.
+	agentConstrainExtension = 255
 )
 
 // maxAgentResponseBytes is the maximum agent reply size that is accepted. This
@@ -205,7 +211,7 @@ type constrainLifetimeAgentMsg struct {
 }
 
 type constrainExtensionAgentMsg struct {
-	ExtensionName    string `sshtype:"3"`
+	ExtensionName    string `sshtype:"255|3"`
 	ExtensionDetails []byte
 
 	// Rest is a field used for parsing, not part of message
@@ -226,7 +232,9 @@ var ErrExtensionUnsupported = errors.New("agent: extension unsupported")
 
 type extensionAgentMsg struct {
 	ExtensionType string `sshtype:"27"`
-	Contents      []byte
+	// NOTE: this matches OpenSSH's PROTOCOL.agent, not the IETF draft [PROTOCOL.agent],
+	// so that it matches what OpenSSH actually implements in the wild.
+	Contents []byte `ssh:"rest"`
 }
 
 // Key represents a protocol 2 public key as defined in
@@ -300,17 +308,50 @@ func parseKey(in []byte) (out *Key, rest []byte, err error) {
 	}, record.Rest, nil
 }
 
+// pipelineMaxInFlight is the maximum number of outstanding requests the
+// client will pipeline to the agent before applying backpressure.
+const pipelineMaxInFlight = 32
+
 // client is a client for an ssh-agent process.
+//
+// Exactly one of pipeline / (mu, conn) is set, chosen by NewClient
+// based on whether the underlying transport implements io.Closer.
 type client struct {
-	// conn is typically a *net.UnixConn
+	// pipeline, if non-nil, dispatches requests over a pipelined
+	// connection: requests are written as soon as the wire is
+	// available and responses are routed back to per-call reply
+	// channels in FIFO order by a background reader goroutine.
+	pipeline *pipeline
+
+	// mu and conn are used in fully-serialized mode, when the
+	// transport does not implement io.Closer. Each call takes mu,
+	// writes its request, reads the matching response, and releases
+	// mu before returning. There is no background goroutine.
+	mu   sync.Mutex
 	conn io.ReadWriter
-	// mu is used to prevent concurrent access to the agent
-	mu sync.Mutex
 }
 
 // NewClient returns an Agent that talks to an ssh-agent process over
 // the given connection.
+//
+// If rw also implements io.Closer (like *net.UnixConn and ssh.Channel
+// do), the returned client pipelines concurrent requests over the
+// connection: callers can issue Sign and other operations from
+// multiple goroutines and they will be written to the agent as soon
+// as the wire is available, rather than waiting for the previous
+// responses. The ssh-agent protocol still requires responses to be
+// returned in request order, so a slow request delays subsequent
+// responses on the same connection (head-of-line blocking).
+//
+// Pipelining requires io.Closer because, on a Write error, the
+// background reader goroutine must be unblocked by closing the
+// underlying connection. When rw does not implement io.Closer
+// this is not possible, so NewClient falls back to fully
+// serializing each request: a single in-flight call at a time.
 func NewClient(rw io.ReadWriter) ExtendedAgent {
+	if rwc, ok := rw.(io.ReadWriteCloser); ok {
+		return &client{pipeline: newPipeline(rwc)}
+	}
 	return &client{conn: rw}
 }
 
@@ -333,6 +374,16 @@ func (c *client) call(req []byte) (reply interface{}, err error) {
 // bytes of the response are returned; no unmarshalling is
 // performed on the response.
 func (c *client) callRaw(req []byte) (reply []byte, err error) {
+	if c.pipeline != nil {
+		return c.pipeline.call(req)
+	}
+	return c.serialCall(req)
+}
+
+// serialCall implements the fully-serialized request/response path
+// used when the transport is not an io.Closer. It writes req under mu
+// and reads the matching response before returning.
+func (c *client) serialCall(req []byte) (reply []byte, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -423,8 +474,9 @@ func (c *client) List() ([]*Key, error) {
 		return keys, nil
 	case *failureAgentMsg:
 		return nil, errors.New("agent: failed to list keys")
+	default:
+		return nil, fmt.Errorf("agent: failed to list keys, unexpected message type %T", msg)
 	}
-	panic("unreachable")
 }
 
 // Sign has the agent sign the data using a protocol 2 key as defined
@@ -455,8 +507,9 @@ func (c *client) SignWithFlags(key ssh.PublicKey, data []byte, flags SignatureFl
 		return &sig, nil
 	case *failureAgentMsg:
 		return nil, errors.New("agent: failed to sign challenge")
+	default:
+		return nil, fmt.Errorf("agent: failed to sign challenge, unexpected message type %T", msg)
 	}
-	panic("unreachable")
 }
 
 // unmarshal parses an agent message in packet, returning the parsed
@@ -548,7 +601,7 @@ func (c *client) insertKey(s interface{}, comment string, constraints []byte) er
 		})
 	case *dsa.PrivateKey:
 		req = ssh.Marshal(dsaKeyMsg{
-			Type:        ssh.KeyAlgoDSA,
+			Type:        ssh.InsecureKeyAlgoDSA,
 			P:           k.P,
 			Q:           k.Q,
 			G:           k.G,
@@ -568,6 +621,9 @@ func (c *client) insertKey(s interface{}, comment string, constraints []byte) er
 			Constraints: constraints,
 		})
 	case ed25519.PrivateKey:
+		if len(k) != ed25519.PrivateKeySize {
+			return fmt.Errorf("agent: bad ED25519 key size: %d", len(k))
+		}
 		req = ssh.Marshal(ed25519KeyMsg{
 			Type:        ssh.KeyAlgoED25519,
 			Pub:         []byte(k)[32:],
@@ -579,6 +635,9 @@ func (c *client) insertKey(s interface{}, comment string, constraints []byte) er
 	// general idiom is to pass ed25519.PrivateKey by value, not by pointer.
 	// We still support the pointer variant for backwards compatibility.
 	case *ed25519.PrivateKey:
+		if len(*k) != ed25519.PrivateKeySize {
+			return fmt.Errorf("agent: bad ED25519 key size: %d", len(*k))
+		}
 		req = ssh.Marshal(ed25519KeyMsg{
 			Type:        ssh.KeyAlgoED25519,
 			Pub:         []byte(*k)[32:],
@@ -654,6 +713,13 @@ func (c *client) Add(key AddedKey) error {
 		constraints = append(constraints, agentConstrainConfirm)
 	}
 
+	for _, ext := range key.ConstraintExtensions {
+		constraints = append(constraints, ssh.Marshal(constrainExtensionAgentMsg{
+			ExtensionName:    ext.ExtensionName,
+			ExtensionDetails: ext.ExtensionDetails,
+		})...)
+	}
+
 	cert := key.Certificate
 	if cert == nil {
 		return c.insertKey(key.PrivateKey, key.Comment, constraints)
@@ -696,6 +762,9 @@ func (c *client) insertCert(s interface{}, cert *ssh.Certificate, comment string
 			Constraints: constraints,
 		})
 	case ed25519.PrivateKey:
+		if len(k) != ed25519.PrivateKeySize {
+			return fmt.Errorf("agent: bad ED25519 key size: %d", len(k))
+		}
 		req = ssh.Marshal(ed25519CertMsg{
 			Type:        cert.Type(),
 			CertBytes:   cert.Marshal(),
@@ -708,6 +777,9 @@ func (c *client) insertCert(s interface{}, cert *ssh.Certificate, comment string
 	// general idiom is to pass ed25519.PrivateKey by value, not by pointer.
 	// We still support the pointer variant for backwards compatibility.
 	case *ed25519.PrivateKey:
+		if len(*k) != ed25519.PrivateKeySize {
+			return fmt.Errorf("agent: bad ED25519 key size: %d", len(*k))
+		}
 		req = ssh.Marshal(ed25519CertMsg{
 			Type:        cert.Type(),
 			CertBytes:   cert.Marshal(),
@@ -729,7 +801,7 @@ func (c *client) insertCert(s interface{}, cert *ssh.Certificate, comment string
 	if err != nil {
 		return err
 	}
-	if bytes.Compare(cert.Key.Marshal(), signer.PublicKey().Marshal()) != 0 {
+	if !bytes.Equal(cert.Key.Marshal(), signer.PublicKey().Marshal()) {
 		return errors.New("agent: signer and cert have different public key")
 	}
 
@@ -771,17 +843,51 @@ func (s *agentKeyringSigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, 
 	return s.agent.Sign(s.pub, data)
 }
 
-func (s *agentKeyringSigner) SignWithOpts(rand io.Reader, data []byte, opts crypto.SignerOpts) (*ssh.Signature, error) {
-	var flags SignatureFlags
-	if opts != nil {
-		switch opts.HashFunc() {
-		case crypto.SHA256:
-			flags = SignatureFlagRsaSha256
-		case crypto.SHA512:
-			flags = SignatureFlagRsaSha512
-		}
+func (s *agentKeyringSigner) SignWithAlgorithm(rand io.Reader, data []byte, algorithm string) (*ssh.Signature, error) {
+	if algorithm == "" || algorithm == underlyingAlgo(s.pub.Type()) {
+		return s.Sign(rand, data)
 	}
+
+	var flags SignatureFlags
+	switch algorithm {
+	case ssh.KeyAlgoRSASHA256:
+		flags = SignatureFlagRsaSha256
+	case ssh.KeyAlgoRSASHA512:
+		flags = SignatureFlagRsaSha512
+	default:
+		return nil, fmt.Errorf("agent: unsupported algorithm %q", algorithm)
+	}
+
 	return s.agent.SignWithFlags(s.pub, data, flags)
+}
+
+var _ ssh.AlgorithmSigner = &agentKeyringSigner{}
+
+// certKeyAlgoNames is a mapping from known certificate algorithm names to the
+// corresponding public key signature algorithm.
+//
+// This map must be kept in sync with the one in certs.go.
+var certKeyAlgoNames = map[string]string{
+	ssh.CertAlgoRSAv01:         ssh.KeyAlgoRSA,
+	ssh.CertAlgoRSASHA256v01:   ssh.KeyAlgoRSASHA256,
+	ssh.CertAlgoRSASHA512v01:   ssh.KeyAlgoRSASHA512,
+	ssh.InsecureCertAlgoDSAv01: ssh.InsecureKeyAlgoDSA,
+	ssh.CertAlgoECDSA256v01:    ssh.KeyAlgoECDSA256,
+	ssh.CertAlgoECDSA384v01:    ssh.KeyAlgoECDSA384,
+	ssh.CertAlgoECDSA521v01:    ssh.KeyAlgoECDSA521,
+	ssh.CertAlgoSKECDSA256v01:  ssh.KeyAlgoSKECDSA256,
+	ssh.CertAlgoED25519v01:     ssh.KeyAlgoED25519,
+	ssh.CertAlgoSKED25519v01:   ssh.KeyAlgoSKED25519,
+}
+
+// underlyingAlgo returns the signature algorithm associated with algo (which is
+// an advertised or negotiated public key or host key algorithm). These are
+// usually the same, except for certificate algorithms.
+func underlyingAlgo(algo string) string {
+	if a, ok := certKeyAlgoNames[algo]; ok {
+		return a
+	}
+	return algo
 }
 
 // Calls an extension method. It is up to the agent implementation as to whether or not
@@ -810,4 +916,171 @@ func (c *client) Extension(extensionType string, contents []byte) ([]byte, error
 	}
 
 	return buf, nil
+}
+
+// pipelineResult carries either a raw agent reply or an error back to a
+// caller waiting on the response channel.
+type pipelineResult struct {
+	reply []byte
+	err   error
+}
+
+// pipeline implements request pipelining over a single agent connection.
+//
+// Writers serialize on writeMu to both register a reply channel in the
+// pending FIFO queue and write the request bytes on the wire; the two
+// must be atomic so the queue order matches the wire order. A single
+// reader goroutine decodes responses from the connection and dispatches
+// each one to the channel at the head of the queue.
+//
+// pending is a chan-of-chan acting as a FIFO queue with a fixed
+// capacity of pipelineMaxInFlight. The outer channel provides ordering
+// (reads happen in send order) and natural backpressure (a full queue
+// blocks new writers). Each inner channel is buffered with capacity
+// one and is sent to exactly once: either by the reader goroutine
+// with the agent reply, or by shutdown with the terminal error during
+// drain. The cap-one buffer makes the producer's send non-blocking,
+// so the reader and shutdown never have to wait for the caller to be
+// scheduled on the receive.
+//
+// When the reader goroutine exits (on read error or protocol
+// violation), it closes exitCh to wake any writer blocked on the
+// pending queue, then serializes with any in-flight writer to close
+// the pending channel, and finally drains the remaining entries
+// delivering the terminal error to each waiting caller. The
+// pipeline relies on conn implementing io.Closer so a writer that
+// hits a Write error can close the connection to unblock the reader
+// goroutine; NewClient is responsible for only constructing a
+// pipeline when this guarantee holds.
+type pipeline struct {
+	conn io.ReadWriteCloser
+
+	writeMu sync.Mutex
+	// pending is the FIFO queue of reply channels with capacity
+	// pipelineMaxInFlight. See type-level documentation.
+	pending chan chan pipelineResult
+	exitCh  chan struct{}
+
+	// err carries the terminal error to callers blocked on a closed
+	// pipeline. It is stored exactly once by the reader goroutine
+	// before exitCh is closed; every read happens after observing
+	// exitCh closed, so the load synchronises through the close and
+	// is guaranteed to return the stored value (never nil).
+	err atomic.Pointer[error]
+}
+
+func newPipeline(conn io.ReadWriteCloser) *pipeline {
+	p := &pipeline{
+		conn:    conn,
+		pending: make(chan chan pipelineResult, pipelineMaxInFlight),
+		exitCh:  make(chan struct{}),
+	}
+	go p.readLoop()
+	return p
+}
+
+// readLoop decodes responses from conn and dispatches them in FIFO order
+// to reply channels in pending. On any failure it invokes shutdown.
+func (p *pipeline) readLoop() {
+	var finalErr error
+	for {
+		var sizeBuf [4]byte
+		if _, err := io.ReadFull(p.conn, sizeBuf[:]); err != nil {
+			finalErr = err
+			break
+		}
+		respSize := binary.BigEndian.Uint32(sizeBuf[:])
+		if respSize > maxAgentResponseBytes {
+			finalErr = errors.New("response too large")
+			break
+		}
+		buf := make([]byte, respSize)
+		if _, err := io.ReadFull(p.conn, buf); err != nil {
+			finalErr = err
+			break
+		}
+		// Successful writes always enqueue before sending bytes, so
+		// pending has a waiting channel for this response.
+		ch := <-p.pending
+		// The reply channel is buffered with capacity 1 and is only
+		// ever written to once, so this send cannot block.
+		ch <- pipelineResult{reply: buf}
+	}
+	p.shutdown(clientErr(finalErr))
+}
+
+// shutdown is called exactly once, from readLoop, when the reader is
+// terminating. It unblocks pending writers and fails all in-flight
+// requests with finalErr.
+func (p *pipeline) shutdown(finalErr error) {
+	// Publish the terminal error before closing exitCh so any
+	// writer that subsequently observes exitCh closed sees err.
+	p.err.Store(&finalErr)
+
+	// Wake any writer blocked waiting for a slot in the pending queue.
+	close(p.exitCh)
+
+	// Wait for any writer currently inside its critical section to
+	// complete. After this lock, no new writer can reach the send on
+	// pending: they will observe exitCh closed in the select and bail
+	// out before attempting the send.
+	p.writeMu.Lock()
+	close(p.pending)
+	p.writeMu.Unlock()
+
+	// Drain entries that were enqueued but never answered, delivering
+	// the terminal error to their waiting callers. The reply channels
+	// are buffered (cap 1) and written to exactly once, so these sends
+	// cannot block.
+	for ch := range p.pending {
+		ch <- pipelineResult{err: finalErr}
+	}
+}
+
+// call sends req to the agent and returns the matching raw response.
+func (p *pipeline) call(req []byte) ([]byte, error) {
+	replyCh := make(chan pipelineResult, 1)
+
+	p.writeMu.Lock()
+
+	// Priority check: if the reader has already finished shutdown,
+	// pending is closed and sending to it would panic. Bail out now.
+	// Once we pass this check while holding writeMu, shutdown cannot
+	// complete close(pending) until we release writeMu, so the send
+	// below is safe against concurrent closure.
+	select {
+	case <-p.exitCh:
+		p.writeMu.Unlock()
+		return nil, *p.err.Load()
+	default:
+	}
+
+	// Enqueue the reply channel before writing the request, so FIFO
+	// order on the wire matches FIFO order in the pending queue. The
+	// exitCh arm handles the case where the reader errors while we
+	// block on a full queue.
+	select {
+	case p.pending <- replyCh:
+	case <-p.exitCh:
+		p.writeMu.Unlock()
+		return nil, *p.err.Load()
+	}
+
+	msg := make([]byte, 4+len(req))
+	binary.BigEndian.PutUint32(msg, uint32(len(req)))
+	copy(msg[4:], req)
+	_, werr := p.conn.Write(msg)
+	p.writeMu.Unlock()
+
+	if werr != nil {
+		// The connection is in an undefined state. Close it so the
+		// reader unblocks promptly and triggers shutdown for every
+		// other in-flight caller. NewClient guarantees conn is a
+		// real io.Closer when the pipeline is in use.
+		p.conn.Close()
+		return nil, clientErr(werr)
+	}
+
+	res := <-replyCh
+	return res.reply, res.err
 }
